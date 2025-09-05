@@ -1,0 +1,62 @@
+name: Update Tags Based on Commits
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  update-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Configure Git user
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Check for [RELEASE] in commit message
+        id: check_commit
+        run: |
+          LATEST_COMMIT_MESSAGE=$(git log -1 --pretty=%B)
+          if echo "$LATEST_COMMIT_MESSAGE" | grep -q "\[RELEASE\]"; then
+            echo "has_release_keyword=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_release_keyword=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get next version
+        id: get_next_version
+        if: steps.check_commit.outputs.has_release_keyword == 'true'
+        uses: thenativeweb/get-next-version@2.6.0
+
+      - name: Import GPG key
+        if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
+        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Create and push tag
+        if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
+        run: |
+          version="v${{ steps.get_next_version.outputs.version }}"
+          git config --global user.signingkey "$GPG_PRIVATE_KEY_ID"
+          git config --global tag.gpgSign true
+          git tag -s "$version" -m "Release $version"
+          git push origin "$version"
+        env:
+          GPG_PRIVATE_KEY_ID: ${{ vars.GPG_PRIVATE_KEY_ID }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Failed to update tags. Check the workflow logs for details."
