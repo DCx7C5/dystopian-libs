@@ -23,11 +23,11 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-      - name: Check for RELEASE in commit message
+      - name: Check for [RELEASE] in commit message
         id: check_commit
         run: |
           LATEST_COMMIT_MESSAGE=$(git log -1 --pretty=%B)
-          if echo "$LATEST_COMMIT_MESSAGE" | grep -qE "RELEASE|Release"; then
+          if echo "$LATEST_COMMIT_MESSAGE" | grep -q "\[RELEASE\]"; then
             echo "has_release_keyword=true" >> $GITHUB_OUTPUT
           else
             echo "has_release_keyword=false" >> $GITHUB_OUTPUT
@@ -40,15 +40,9 @@ jobs:
 
       - name: Import GPG key
         if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
-        run: |
-          tmpdir=$(mktemp -d "/tmp/XXXXXXX")
-          echo "gpgdir=$tmpdir" >> $GITHUB_OUTPUT
-          echo "$GPG_PRIVATE_KEY" | \
-          openssl aes-256-cbc -a -d -pbkdf2 -pass "pass:$GPG_PASSPHRASE" | \
-          gpg --batch --homedir "$tmpdir" --import
+        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Create and push tag
         if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
@@ -61,18 +55,6 @@ jobs:
         env:
           GPG_PRIVATE_KEY_ID: ${{ vars.GPG_PRIVATE_KEY_ID }}
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-
-      - name: Explicitly delete keys
-        if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          gpgdir="${{ steps.meta.outputs.gpgdir }}"
-          files=$(find "$gpgdir" -type f 2>/dev/null)
-          for file in $files; do
-            shred -n 25 "$file"
-          done
-          rm -rf "$gpgdir"
 
       - name: Notify on failure
         if: failure()
