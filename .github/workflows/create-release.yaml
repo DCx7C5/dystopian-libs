@@ -33,12 +33,8 @@ jobs:
 
       - name: Import GPG key
         run: |
-          tmpdir=$(mktemp -d /tmp/XXXXXXX)
-          echo "gpgdir=$tmpdir" >> $GITHUB_OUTPUT
-          touch "$tmpdir/pubring.kbx"
-          echo "$GPG_PRIVATE_KEY" | \
-          openssl aes-256-cbc -a -d -pbkdf2 -pass "pass:$GPG_PASSPHRASE" | \
-          gpg --batch --homedir "$tmpdir" --import
+          set -euo pipefail
+
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -56,11 +52,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          tmpdir=$(mktemp -d /tmp/XXXXXXX)
+          echo "gpgdir=$tmpdir" >> $GITHUB_OUTPUT
+          touch "$tmpdir/pubring.kbx"
+          echo "$GPG_PRIVATE_KEY" | \
+          openssl aes-256-cbc -a -d -pbkdf2 -pass "pass:$GPG_PASSPHRASE" | \
+          gpg --batch --homedir "$tmpdir" --import
           repo="${GITHUB_REPOSITORY##*/}"
           ver="${{ steps.meta.outputs.ver }}"
-          gpgdir="${{ steps.meta.outputs.gpgdir }}"
-          gpg --batch --homedir "$gpgdir" --yes --detach-sign --armor -u "${GPG_PRIVATE_KEY_ID}" "${repo}-${ver}.tar.gz"
-          gpg --batch --homedir "$gpgdir" --yes --detach-sign --armor -u "${GPG_PRIVATE_KEY_ID}" "${repo}-${ver}.tar.gz.sha256"
+          gpg --batch --homedir "$tmpdir" --yes --detach-sign --armor -u "${GPG_PRIVATE_KEY_ID}" "${repo}-${ver}.tar.gz"
+          gpg --batch --homedir "$tmpdir" --yes --detach-sign --armor -u "${GPG_PRIVATE_KEY_ID}" "${repo}-${ver}.tar.gz.sha256"
         env:
           GPG_PRIVATE_KEY_ID: ${{ vars.GPG_PRIVATE_KEY_ID }}
 
