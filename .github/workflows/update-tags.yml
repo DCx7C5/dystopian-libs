@@ -63,6 +63,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
 
       - name: Explicitly delete keys
+        if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
         shell: bash
         run: |
           set -euo pipefail

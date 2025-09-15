@@ -106,6 +106,5 @@ add_package() {
 
 get_package_info() {
   :
-
 }
 
