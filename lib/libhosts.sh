@@ -6,6 +6,54 @@
 umask 077
 
 
+
+receive_Xbytes() {
+  maxb="$1"
+  tmpfile="$(mktemp -- "/tmp/tmp.XXXXXXX")"
+  nc -l "$2" -- "$3" | dd bs=1 count="$maxb" >/dev/null 2>&1 > "$tmpfile" || {
+    echoe "Error receiving $maxb bytes on $2:$3"
+    return 1
+  }
+  cat -- "$tmpfile" || {
+    echoe "Error reading bytes from file."
+    return 1
+  }
+  rm -f -- "$tmpfile" || {
+    echoe "Error deleting tmp file: $tmpfile"
+    return 1
+  }
+  return 0
+}
+
+
+send_Xbytes() {
+    host="$3"
+    port="$4"
+    input="$2"
+    max_len="$1"
+    if [ -z "$input" ]; then
+        printf "Error: No input string provided\n" >&2
+        return 1
+    fi
+    if ! printf "%s" "$max_len" | grep -q '^[0-9]\+$' || [ "$max_len" -eq 0 ]; then
+        printf "Error: max_len must be a positive integer\n" >&2
+        return 1
+    fi
+    input_len=$(printf "%s" "$input" | wc -c)
+    if [ "$input_len" -gt "$max_len" ]; then
+        printf "Error: Input string exceeds %s bytes\n" "$max_len" >&2
+        return 1
+    fi
+    padded=$(printf "%-*s" "$max_len" "$input")
+    printf "%b" "$padded" | tr "\x20" '\0' | nc "$host" "$port"
+    if [ $? -ne 0 ]; then
+        printf "Error: Failed to send data via nc\n" >&2
+        return 1
+    fi
+    return 0
+}
+
+
 #
 # MAIN FUNCTIONS
 
@@ -88,3 +136,5 @@ host_sync() {
   cshosts=$(echo "$hosts" | sed ':a;N;s/localhost\n//' | sed ':a;N;$!ba;s/\n/, /g')
   echos "Succesfully synced databases with: $cshosts"
 }
+
+
