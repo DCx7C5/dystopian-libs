@@ -49,12 +49,12 @@ jobs:
           touch "$tmpdir/pubring.kbx"
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | \
           openssl aes-256-cbc -a -d -pbkdf2 -pass "pass:${{ secrets.GPG_PASSPHRASE }}" | \
-          gpg --batch --homedir "$tmpdir" --import
+          gpg --no-tty --batch --homedir "$tmpdir" --import
           repo="${GITHUB_REPOSITORY##*/}"
           ver="${{ steps.meta.outputs.ver }}"
           gpgid="${{ vars.GPG_PRIVATE_KEY_ID }}"
-          gpg --batch --notty --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz"
-          gpg --batch --notty --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz.sha256"
+          gpg --batch --no-tty --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz"
+          gpg --batch --no-tty --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz.sha256"
 
       - name: Leave no keys
         shell: bash
