@@ -4,7 +4,6 @@
 
 
 _create_argon2id_derived_key_pw() {
-
     # Check the exit status of the pipeline
     if openssl kdf \
         -keylen 32 \
@@ -72,46 +71,46 @@ _process_domains() {
 }
 
 _create_sslconfig() {
-    : "${dnsc:=1}"
-    : "${ipc:=1}"
-    cfg_type="$1"
-    domains_ips="$2"
-    email="$3"
-    country="$4"
-    state="$5"
-    locality="$6"
-    organization="$7"
-    orgunit="$8"
-    common_name="$9"
-    crldistpoints="${10}"
-    config_out="${11}"
-    domains_ips=$(printf "%s" "$domains_ips" | sed 's/,/ /g')
-    domcount=$(printf "%s" "$domains_ips" | wc -w | tr -d ' ')
-    ips=""
-    dns=""
-    for domain in $domains_ips; do
+  : "${dnsc:=1}"
+  : "${ipc:=1}"
+  cfg_type="$1"
+  domains_ips="$2"
+  email="$3"
+  country="$4"
+  state="$5"
+  locality="$6"
+  organization="$7"
+  orgunit="$8"
+  common_name="$9"
+  crldistpoints="${10}"
+  config_out="${11}"
+  domains_ips=$(printf "%s" "$domains_ips" | sed 's/,/ /g')
+  domcount=$(printf "%s" "$domains_ips" | wc -w | tr -d ' ')
+  ips=""
+  dns=""
+  for domain in $domains_ips; do
 
-        if is_ip "$domain"; then
-            ips="${ips}\nIP.$ipc = $domain"
-            ipc=$(("$ipc" + 1))
-        else
-            dns="${dns}\nDNS.$dnsc = $domain"
-            dnsc=$(("$dnsc" + 1))
-        fi
-    done
-
-    if [ "$cfg_type" = "server" ]; then
-        common_name="${domains_ips%% *}"
-    elif [ "$cfg_type" = "client" ]; then
-        if [ -z "$common_name" ]; then
-            common_name="$domains_ips"
-        fi
+    if is_ip "$domain"; then
+        ips="${ips}\nIP.$ipc = $domain"
+        ipc=$(("$ipc" + 1))
+    else
+        dns="${dns}\nDNS.$dnsc = $domain"
+        dnsc=$(("$dnsc" + 1))
     fi
+  done
 
-    (
-        # shellcheck disable=SC2030
-        ssl_cfg=""
-        ssl_cfg=$(cat <<EOF
+  if [ "$cfg_type" = "server" ]; then
+    common_name="${domains_ips%% *}"
+  elif [ "$cfg_type" = "client" ]; then
+    if [ -z "$common_name" ]; then
+        common_name="$domains_ips"
+    fi
+  fi
+
+  (
+    # shellcheck disable=SC2030
+    ssl_cfg=""
+    ssl_cfg=$(cat <<EOF
 [ ca ]
 default_ca = CA_default
 
@@ -135,101 +134,102 @@ prompt = no
 distinguished_name = req_distinguished_name
 EOF
 )
-        if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
-            ssl_cfg="${ssl_cfg}\nx509_extensions = v3_ca\n\n"
-        elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
-            ssl_cfg="${ssl_cfg}\nreq_extensions = req_ext\n\n"
-        fi
-        ssl_cfg="${ssl_cfg}[ req_distinguished_name ]\n"
-
-        if [ -n "$country" ]; then
-            ssl_cfg="${ssl_cfg}C = ${country}\n"
-        fi
-        if [ -n "$state" ]; then
-            ssl_cfg="${ssl_cfg}ST = ${state}\n"
-        fi
-        if [ -n "$locality" ]; then
-            ssl_cfg="${ssl_cfg}L = ${locality}\n"
-        fi
-        if [ -n "$organization" ]; then
-            ssl_cfg="${ssl_cfg}O = ${organization}\n"
-        fi
-        if [ "$cfg_type" = "root" ]; then
-            if [ -z "$orgunit" ]; then
-                ssl_cfg="${ssl_cfg}OU = Certificate Authority\n"
-            else
-                ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
-            fi
-            if [ -z "$common_name" ]; then
-                ssl_cfg="${ssl_cfg}CN = $common_name CA\n"
-            else
-                ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
-            fi
-
-        elif [ "$cfg_type" = "intermediate" ]; then
-            if [ -z "$orgunit" ]; then
-                ssl_cfg="${ssl_cfg}OU = Intermediate Certificate Authority\n"
-            else
-                ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
-            fi
-            if [ -z "$common_name" ]; then
-                ssl_cfg="${ssl_cfg}CN = $common_name Intermediate CA\n"
-            else
-                ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
-            fi
-        elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
-            ssl_cfg="${ssl_cfg}CN = $common_name\n"
-        fi
-        if [ -n "$email" ]; then
-            ssl_cfg="${ssl_cfg}emailAddress = $email\n"
-        fi
-        ssl_cfg="${ssl_cfg}\n"
-        if [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
-            ssl_cfg="${ssl_cfg}[ req_ext ]\n"
-            ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
-            ssl_cfg="${ssl_cfg}basicConstraints = CA:FALSE\n"
-            if [ "$cfg_type" = "server" ]; then
-                ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, keyEncipherment\n"
-                ssl_cfg="${ssl_cfg}extendedKeyUsage = serverAuth\n"
-            elif [ "$cfg_type" = "client" ]; then
-                ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature\n"
-                ssl_cfg="${ssl_cfg}extendedKeyUsage = clientAuth\n"
-            fi
-        fi
-
-        if [ "$domcount" -gt 1 ]; then
-            ssl_cfg="${ssl_cfg}subjectAltName = @alt_names\n\n"
-            ssl_cfg="${ssl_cfg}[ alt_names ]$ips$dns\n"
-        fi
-        if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
-            ssl_cfg="${ssl_cfg}[ v3_ca ]\n"
-            ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
-            ssl_cfg="${ssl_cfg}authorityKeyIdentifier = keyid:always,issuer\n"
-            if [ "$cfg_type" = "intermediate" ]; then
-                ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE, pathlen:0\n"
-            elif [ "$cfg_type" = "root" ]; then
-                ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE\n"
-            fi
-            ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, cRLSign, keyCertSign\n"
-        fi
-        if [ -n "$crldistpoints" ]; then
-            ssl_cfg="${ssl_cfg}\n\ncrlDistributionPoints = URI:$crldistpoints"
-        fi
-        printf "%b" "$ssl_cfg" > "$config_out"
-        if [ ! -s "$config_out" ]; then
-            echoe "Config file $config_out was not created"
-        return 1
+    if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
+        ssl_cfg="${ssl_cfg}\nx509_extensions = v3_ca\n\n"
+    elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
+        ssl_cfg="${ssl_cfg}\nreq_extensions = req_ext\n\n"
     fi
-    )
-    status=$?
-    echod "Subshell for ssl_config creation ended with status: $status"
-    if [ "$status" -eq 0 ];then
-        set_permissions_and_owner "$config_out" 440
-        echod "SSL config contents:"
-        echod "$(cat "$config_out" 2>/dev/null || echo "Failed to read $config_out")"
-        return 0
+    ssl_cfg="${ssl_cfg}[ req_distinguished_name ]\n"
+
+    if [ -n "$country" ]; then
+        ssl_cfg="${ssl_cfg}C = ${country}\n"
     fi
+    if [ -n "$state" ]; then
+        ssl_cfg="${ssl_cfg}ST = ${state}\n"
+    fi
+    if [ -n "$locality" ]; then
+        ssl_cfg="${ssl_cfg}L = ${locality}\n"
+    fi
+    if [ -n "$organization" ]; then
+        ssl_cfg="${ssl_cfg}O = ${organization}\n"
+    fi
+    if [ "$cfg_type" = "root" ]; then
+        if [ -z "$orgunit" ]; then
+            ssl_cfg="${ssl_cfg}OU = Certificate Authority\n"
+        else
+            ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
+        fi
+        if [ -z "$common_name" ]; then
+            ssl_cfg="${ssl_cfg}CN = $common_name CA\n"
+        else
+            ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
+        fi
+
+    elif [ "$cfg_type" = "intermediate" ]; then
+        if [ -z "$orgunit" ]; then
+            ssl_cfg="${ssl_cfg}OU = Intermediate Certificate Authority\n"
+        else
+            ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
+        fi
+        if [ -z "$common_name" ]; then
+            ssl_cfg="${ssl_cfg}CN = $common_name Intermediate CA\n"
+        else
+            ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
+        fi
+    elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
+        ssl_cfg="${ssl_cfg}CN = $common_name\n"
+    fi
+    if [ -n "$email" ]; then
+        ssl_cfg="${ssl_cfg}emailAddress = $email\n"
+    fi
+    ssl_cfg="${ssl_cfg}\n"
+    if [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
+        ssl_cfg="${ssl_cfg}[ req_ext ]\n"
+        ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
+        ssl_cfg="${ssl_cfg}basicConstraints = CA:FALSE\n"
+        if [ "$cfg_type" = "server" ]; then
+            ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, keyEncipherment\n"
+            ssl_cfg="${ssl_cfg}extendedKeyUsage = serverAuth\n"
+        elif [ "$cfg_type" = "client" ]; then
+            ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature\n"
+            ssl_cfg="${ssl_cfg}extendedKeyUsage = clientAuth\n"
+        fi
+    fi
+
+    if [ "$domcount" -gt 1 ]; then
+        ssl_cfg="${ssl_cfg}subjectAltName = @alt_names\n\n"
+        ssl_cfg="${ssl_cfg}[ alt_names ]$ips$dns\n"
+    fi
+    if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
+        ssl_cfg="${ssl_cfg}[ v3_ca ]\n"
+        ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
+        ssl_cfg="${ssl_cfg}authorityKeyIdentifier = keyid:always,issuer\n"
+        if [ "$cfg_type" = "intermediate" ]; then
+            ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE, pathlen:0\n"
+        elif [ "$cfg_type" = "root" ]; then
+            ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE\n"
+        fi
+        ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, cRLSign, keyCertSign\n"
+    fi
+    if [ -n "$crldistpoints" ]; then
+        ssl_cfg="${ssl_cfg}\n\ncrlDistributionPoints = URI:$crldistpoints"
+    fi
+    ssl_cfg="${ssl_cfg}\n"
+    printf "%b" "$ssl_cfg" > "$config_out"
+    if [ ! -s "$config_out" ]; then
+        echoe "Config file $config_out was not created"
     return 1
+  fi
+  )
+  status=$?
+  echod "Subshell for ssl_config creation ended with status: $status"
+  if [ "$status" -eq 0 ];then
+      set_permissions_and_owner "$config_out" 440
+      echod "SSL config contents:"
+      echod "$(cat "$config_out" 2>/dev/null || echo "Failed to read $config_out")"
+      return 0
+  fi
+  return 1
 }
 
 
@@ -845,10 +845,10 @@ create_certificate_authority() {
 
     if [ "$intermediate" = "true" ]; then
         root_ca_index="${18:+$(echo "${18}" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
-        root_ca_index="${root_ca_index:-$(jq -r '.defaultCA // empty' -- "$DC_DB")}"
+        root_ca_index="${root_ca_index:-$(get_defaultRootCA)}"
 
         if [ -z "$root_ca_index" ] && [ "$intermediate" = "true" ]; then
-            echoe "Root CA Index must be set."
+            echoe "Root CA Name --rootca must be set."
             return 1
         fi
 
@@ -868,6 +868,7 @@ create_certificate_authority() {
     fi
 
     set_as_default="${24:-false}"
+    set_as_defaultRoot="${25:-false}"
 
     echod "Starting create_certificate_authority with parameters:"
     echod "           ca_name: $ca_name"
@@ -1039,21 +1040,20 @@ create_certificate_authority() {
     fi
 
     # Set as default CA if first root CA
-    temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
-    current_default=$(jq -r '.defaultCA // empty' -- "$DC_DB")
-    if [ "$set_as_default" = "true" ] || { [ -z "$current_default" ] && [ "$ca_storage_type" = "root" ]; }; then
-        echod "Setting as default root CA..."
-        if jq --arg ca_index "$index" '.defaultCA = $ca_index' -- "$DC_DB" > "$temp_file"; then
-            mv "$temp_file" "$DC_DB" || {
-                echoe "Failed saving database file."
-                rm -r -- "$temp_file"
-            }
-            echod "Successfully set as default CA"
-        else
-            echoe "Warning: Failed to set as default CA"
-            rm -f -- "$temp_file"
-        fi
-        echoi "Set as default CA: $index"
+    if ! has_defaultRootCA || [ "$set_as_defaultRoot" = "true" ]; then
+      echoi "Set as defaultRootCA: $index"
+      set_defaultRootCA "$index"
+      echosv "Setting defaultRootCA successful."
+    fi
+
+    if { has_defaultRootCA && ! has_defaultCA; } || [ "$set_as_default" = "true" ]; then
+      # check if CA is not in root CA dictionary
+      defaultRootCA=$(get_value_from_caroot "$index")
+      if [ "$index" != "$defaultRootCA" ]; then
+        echoi "Set as defaultCA: $index"
+        set_defaultCA "$index"
+        echosv "Setting defaultCA successful."
+      fi
     fi
 
     # Display CA information
@@ -1072,124 +1072,124 @@ create_certificate_authority() {
 }
 
 create_certificate_signing_request() {
-    key_name="$1" && [ -z "$key_name" ] && echoe "Key name is required" && return 1
-    index="${key_name:+$(echo "$1" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
+  key_name="$1" && [ -z "$key_name" ] && echoe "Key name is required" && return 1
+  index="${key_name:+$(echo "$1" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
 
-    if ! index_exists "$index" ; then
-        echow "Normalized $ca_name $index doesn't exist in database. Fallback to fetching from filename..."
-    fi
+  if ! index_exists "$index" ; then
+      echow "Normalized $ca_name $index doesn't exist in database. Fallback to fetching from filename..."
+  fi
 
-    key_file="${2:+$([ -s "${2}" ] && absolutepath "${2}")}"
-    key_file="${index:+$(get_value_from_keys_index "$index" "key")}"
+  key_file="${2:+$([ -s "${2}" ] && absolutepath "${2}")}"
+  key_file="${index:+$(get_value_from_keys_index "$index" "key")}"
 
-    password="${3:+$([ -s "$3" ] && absolutepath "$3")}"
+  password="${3:+$([ -s "$3" ] && absolutepath "$3")}"
 
-    salt="${4:+$([ -s "$4" ] && absolutepath "$4")}"
-    salt="${index:+$(get_value_from_keys_index "$index" "salt")}"
+  salt="${4:+$([ -s "$4" ] && absolutepath "$4")}"
+  salt="${index:+$(get_value_from_keys_index "$index" "salt")}"
 
-    csr_out="${5:+$(absolutepathidx "$5" "$index")}"
-    csr_out="${5:-$(absolutepathidx "$DC_CERT/cert.csr" "$index")}"
+  csr_out="${5:+$(absolutepathidx "$5" "$index")}"
+  csr_out="${5:-$(absolutepathidx "$DC_CERT/cert.csr" "$index")}"
 
-    cfg_out="${6:+$(absolutepathidx "$6" "$index")}"
-    cfg_out="${6:-$(absolutepathidx "$DC_CERT/cert.conf" "$index")}"
+  cfg_out="${6:+$(absolutepathidx "$6" "$index")}"
+  cfg_out="${6:-$(absolutepathidx "$DC_CERT/cert.conf" "$index")}"
 
-    type="$([ "$client" = "true" ] && echo "client" || echo "server")"
+  type="$([ "$client" = "true" ] && echo "client" || echo "server")"
 
-    domains="$7"
-    ips="$8"
-    client="${9:-true}"
-    server="${10:-false}"
-    email="${11}"
-    country="${12}"
-    state="${13}"
-    locality="${14}"
-    organization="${15}"
-    orgunit="${16}"
-    common_name="${17:-${key_name}}"
-    crldist="${18}"
+  domains="$7"
+  ips="$8"
+  client="${9:-true}"
+  server="${10:-false}"
+  email="${11}"
+  country="${12}"
+  state="${13}"
+  locality="${14}"
+  organization="${15}"
+  orgunit="${16}"
+  common_name="${17:-${key_name}}"
+  crldist="${18}"
 
-    echod "Starting create_certificate_signing_request with parameters:"
-    echod "      key_name: $key_name"
-    echod "      key_file: $key_file"
-    echod "      password: $([ -n "$password" ] && echo "[SET]" || echo "[EMPTY]")"
-    echod "          salt: $([ -n "$salt" ] && echo "[SET]" || echo "[EMPTY]")"
-    echod "       csr_out: $csr_out"
-    echod "       cfg_out: $cfg_out"
-    echod "       domains: $domains"
-    echod "           ips: $ips"
-    echod "        client: $client"
-    echod "        server: $server"
-    echod "         email: $email"
-    echod "       country: $country"
-    echod "         state: $state"
-    echod "      locality: $locality"
-    echod "  organization: $organization"
-    echod "       orgunit: $orgunit"
-    echod "   common_name: $common_name"
-    echod "       crldist: $crldist"
-    echod "          user: $DYSTOPIAN_USER"
+  echod "Starting create_certificate_signing_request with parameters:"
+  echod "      key_name: $key_name"
+  echod "      key_file: $key_file"
+  echod "      password: $([ -n "$password" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "          salt: $([ -n "$salt" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "       csr_out: $csr_out"
+  echod "       cfg_out: $cfg_out"
+  echod "       domains: $domains"
+  echod "           ips: $ips"
+  echod "        client: $client"
+  echod "        server: $server"
+  echod "         email: $email"
+  echod "       country: $country"
+  echod "         state: $state"
+  echod "      locality: $locality"
+  echod "  organization: $organization"
+  echod "       orgunit: $orgunit"
+  echod "   common_name: $common_name"
+  echod "       crldist: $crldist"
+  echod "          user: $DYSTOPIAN_USER"
 
-    echod "Validating input parameters"
-    # Validate required parameters
+  echod "Validating input parameters"
+  # Validate required parameters
 
-    if [ "$server" = "true" ] && [ "$client" = "true" ]; then
-        echoe "--server and --client can't be set at the same time"
+  if [ "$server" = "true" ] && [ "$client" = "true" ]; then
+    echoe "--server and --client can't be set at the same time"
+    return 1
+  fi
+
+  if [ -z "$index" ]; then
+    echoe "Not able to parse index from DB or files"
+    return 1
+  fi
+
+  echod "Certificate type set to: $type"
+
+  # Create SSL config
+  echoi "Creating SSL configuration for $type certificate"
+  echod "Calling _create_sslconfig $type, \"$domains,$ips\" $email $country $state $locality $organization $orgunit $common_name $crldist $cfg_out"
+  _create_sslconfig "$type" "$domains,$ips" "$email" "$country" "$state" "$locality" \
+    "$organization" "$orgunit" "$common_name" "$crldist" "$cfg_out" || {
+      echoe "Failed calling function _create_sslconfig"
+      return 1
+  }
+  echosv "Creating ssl config file successful."
+
+  # Create output directories if necessary
+  for d in "$(dirname "$csr_out")" "$(dirname "$cfg_out")"; do
+    if [ ! -d "$d" ]; then
+      echow "Couldn't find output directory: $d"
+      echov "Creating output directory: $d"
+      mkdir -p "$d" || {
+        echoe "Failed to create directory: $d"
         return 1
-    fi
-
-    if [ -z "$index" ]; then
-        echoe "Not able to parse index from DB or files"
+      }
+      set_permissions_and_owner "$d" 750 || {
+        echoe "Calling set_permissions_and_owner $d 750 failed."
         return 1
+      }
+      echosv "Output directory created successfully"
     fi
+  done
 
-    echod "Certificate type set to: $type"
+  echod "Config file $cfg_out exists and is readable"
 
-    # Create SSL config
-    echoi "Creating SSL configuration for $type certificate"
-    echod "Calling _create_sslconfig $type, \"$domains,$ips\" $email $country $state $locality $organization $orgunit $common_name $crldist $cfg_out"
-    _create_sslconfig "$type" "$domains,$ips" "$email" "$country" "$state" "$locality" \
-        "$organization" "$orgunit" "$common_name" "$crldist" "$cfg_out" || {
-            echoe "Failed calling function _create_sslconfig"
-            return 1
-    }
-    echosv "Creating ssl config file successful."
+  # Create CSR
+  echoi "Generating Certificate Signing Request"
+  echod "Calling _create_and_verify_csr $csr_out $key_file $password $salt $cfg_out"
+  _create_and_verify_csr "$csr_out" "$key_file" "$password" "$salt" "$cfg_out" || {
+    echoe "Failed calling _create_and_verify_key"
+    rm -f -- "$cfg_out" "$csr_out" || true
+    return 1
+  }
+  echosv "Creating and verifying CSR file succesful"
 
-    # Create output directories if necessary
-    for d in "$(dirname "$csr_out")" "$(dirname "$cfg_out")"; do
-        if [ ! -d "$d" ]; then
-            echow "Couldn't find output directory: $d"
-            echov "Creating output directory: $d"
-            mkdir -p "$d" || {
-                echoe "Failed to create directory: $d"
-                return 1
-            }
-            set_permissions_and_owner "$d" 750 || {
-                echoe "Calling set_permissions_and_owner $d 750 failed."
-                return 1
-            }
-            echosv "Output directory created successfully"
-        fi
-    done
+  # Add CSR to index
+  add_to_ssl_keys_database "$index" "csr" "$csr_out"
+  add_to_ssl_keys_database "$index" "cfg" "$cfg_out"
+  add_to_ssl_keys_database "$index" "type" "$type"
 
-    echod "Config file $cfg_out exists and is readable"
-
-    # Create CSR
-    echoi "Generating Certificate Signing Request"
-    echod "Calling _create_and_verify_csr $csr_out $key_file $password $salt $cfg_out"
-    _create_and_verify_csr "$csr_out" "$key_file" "$password" "$salt" "$cfg_out" || {
-        echoe "Failed calling _create_and_verify_key"
-        rm -f -- "$cfg_out" "$csr_out" || true
-        return 1
-    }
-    echosv "Creating and verifying CSR file succesful"
-
-    # Add CSR to index
-    add_to_ssl_keys_database "$index" "csr" "$csr_out"
-    add_to_ssl_keys_database "$index" "cfg" "$cfg_out"
-    add_to_ssl_keys_database "$index" "type" "$type"
-
-    echos "Created Certificate Signing Request (CSR) successfully"
-    return 0
+  echos "Created Certificate Signing Request (CSR) successfully"
+  return 0
 }
 
 
@@ -1236,7 +1236,7 @@ sign_certificate_request() {
     echod "      csr_name: $csr_name"
     echod "      csr_file: $csr_file"
     echod "   config_file: $config_file"
-    echod "       ca_index: $ca_index"
+    echod "      ca_index: $ca_index"
     echod "  ca_cert_file: $ca_cert_file"
     echod "   ca_key_file: $ca_key_file"
     echod "      cert_out: $cert_out"
@@ -1356,267 +1356,267 @@ sign_certificate_request() {
 
 
 create_cert_chain() {
-    cert_file="$1"
-    ca_file="$2"
-    chain_outfile="${3:-"$DC_CERT/fullchain.pem"}"
-    index="${4:-}"
+  cert_file="$1"
+  ca_file="$2"
+  chain_outfile="${3:-"$DC_CERT/fullchain.pem"}"
+  index="${4:-}"
 
-    # Validate input files exist
-    if [ ! -s "$cert_file" ]; then
-        echoe "Certificate file '$cert_file' does not exist"
-        return 1
-    fi
-    if [ ! -s "$ca_file" ]; then
-        echoe "CA file '$ca_file' does not exist"
-        return 1
-    fi
+  # Validate input files exist
+  if [ ! -s "$cert_file" ]; then
+    echoe "Certificate file '$cert_file' does not exist"
+    return 1
+  fi
+  if [ ! -s "$ca_file" ]; then
+    echoe "CA file '$ca_file' does not exist"
+    return 1
+  fi
 
-    # Validate files are actually certificates
-    if ! openssl x509 -in "$cert_file" -noout -text >/dev/null 2>&1; then
-        echoe "'$cert_file' is not a valid certificate"
-        return 1
-    fi
+  # Validate files are actually certificates
+  if ! openssl x509 -in "$cert_file" -noout -text >/dev/null 2>&1; then
+    echoe "'$cert_file' is not a valid certificate"
+    return 1
+  fi
 
-    if ! openssl x509 -in "$ca_file" -noout -text >/dev/null 2>&1; then
-        echoe "'$ca_file' is not a valid certificate"
-        return 1
-    fi
+  if ! openssl x509 -in "$ca_file" -noout -text >/dev/null 2>&1; then
+    echoe "'$ca_file' is not a valid certificate"
+    return 1
+  fi
 
-    # Create output directory if it doesn't exist
-    chain_dir="$(dirname "$chain_outfile")"
-    if [ ! -d "$chain_dir" ]; then
-        mkdir -p "$chain_dir" || {
-            echoe "Failed to create directory '$chain_dir'"
-            return 1
-        }
-    fi
-
-    # Backup existing chain file if it exists
-    if [ -f "$chain_outfile" ]; then
-        backup_file="${chain_outfile%.*}-backup-$(date +%Y%m%d-%H%M%S).${chain_outfile##*.}"
-        cp "$chain_outfile" "$backup_file" || {
-            echo "Warning: Failed to backup existing chain file"
-        }
-        echo "Existing chain file backed up as: $backup_file"
-    fi
-
-    # Create fullchain cert (cert first, then CA)
-    {
-        cat "$cert_file" || {
-            echoe "Failed to read certificate file"
-            return 1
-        }
-        echo
-        cat "$ca_file" || {
-            echoe "Failed to read CA file"
-            return 1
-        }
-    } > "$chain_outfile" || {
-        echoe "Failed to create certificate chain"
-        return 1
+  # Create output directory if it doesn't exist
+  chain_dir="$(dirname "$chain_outfile")"
+  if [ ! -d "$chain_dir" ]; then
+    mkdir -p "$chain_dir" || {
+      echoe "Failed to create directory '$chain_dir'"
+      return 1
     }
+  fi
 
-    # Verify the chain is valid
-    if ! openssl verify -CAfile "$ca_file" "$cert_file" >/dev/null 2>&1; then
-        echow "Warning: Certificate chain may not be valid - verification failed"
-    fi
+  # Backup existing chain file if it exists
+  if [ -f "$chain_outfile" ]; then
+    backup_file="${chain_outfile%.*}-backup-$(date +%Y%m%d-%H%M%S).${chain_outfile##*.}"
+    cp "$chain_outfile" "$backup_file" || {
+      echo "Warning: Failed to backup existing chain file"
+    }
+    echo "Existing chain file backed up as: $backup_file"
+  fi
 
-    # Add to index if index parameter provided
-    if [ -n "$index" ]; then
-        add_to_ssl_keys_database "$index" "fullchain" "$chain_outfile" || {
-            echow "Warning: Failed to add chain file to index"
-        }
-    fi
+  # Create fullchain cert (cert first, then CA)
+  {
+    cat "$cert_file" || {
+      echoe "Failed to read certificate file"
+      return 1
+    }
+    echo
+    cat "$ca_file" || {
+      echoe "Failed to read CA file"
+      return 1
+    }
+  } > "$chain_outfile" || {
+    echoe "Failed to create certificate chain"
+    return 1
+  }
 
-    echo "Certificate chain created successfully: $chain_outfile"
+  # Verify the chain is valid
+  if ! openssl verify -CAfile "$ca_file" "$cert_file" >/dev/null 2>&1; then
+    echow "Warning: Certificate chain may not be valid - verification failed"
+  fi
 
-    # Display chain info
-    echo "Chain contains:"
-    openssl crl2pkcs7 -nocrl -certfile "$chain_outfile" | \
-        openssl pkcs7 -print_certs -noout | \
-        grep "subject=" | \
-        sed 's/subject=/  - /' 2>/dev/null || true
+  # Add to index if index parameter provided
+  if [ -n "$index" ]; then
+    add_to_ssl_keys_database "$index" "fullchain" "$chain_outfile" || {
+        echow "Warning: Failed to add chain file to index"
+    }
+  fi
 
-    return 0
+  echo "Certificate chain created successfully: $chain_outfile"
+
+  # Display chain info
+  echo "Chain contains:"
+  openssl crl2pkcs7 -nocrl -certfile "$chain_outfile" | \
+    openssl pkcs7 -print_certs -noout | \
+    grep "subject=" | \
+    sed 's/subject=/  - /' 2>/dev/null || true
+
+  return 0
 }
 
 
 create_certificate_revocation_list() {
-    ca_key_file="$1"
-    ca_cert_file="$2"
-    crl_outfile="$3"
-    ca_pass="$4"
-    crl_days="$5"
+  ca_key_file="$1"
+  ca_cert_file="$2"
+  crl_outfile="$3"
+  ca_pass="$4"
+  crl_days="$5"
 
-    # Check for default CA in index.json if CA files not provided
-    default_ca=$(jq -r '.defaultCA // empty' -- "$DC_DB")
-    if [ -z "$ca_cert_file" ] || [ -z "$ca_key_file" ]; then
-        if [ -n "$default_ca" ] && [ "$default_ca" != "null" ]; then
-            echov "Using default CA: $default_ca"
-            # Get CA files from the default CA entry
-            ca_cert_file="${ca_cert_file:-$(get_storage "ca" "$default_ca" | jq -r '.cert // empty')}"
-            ca_key_file="${ca_key_file:-$(get_storage "ca" "$default_ca" | jq -r '.key // empty')}"
-        fi
+  # Check for default CA in index.json if CA files not provided
+  default_ca=$(jq -r '.defaultCA // empty' -- "$DC_DB")
+  if [ -z "$ca_cert_file" ] || [ -z "$ca_key_file" ]; then
+    if [ -n "$default_ca" ] && [ "$default_ca" != "null" ]; then
+      echov "Using default CA: $default_ca"
+      # Get CA files from the default CA entry
+      ca_cert_file="${ca_cert_file:-$(get_storage "ca" "$default_ca" | jq -r '.cert // empty')}"
+      ca_key_file="${ca_key_file:-$(get_storage "ca" "$default_ca" | jq -r '.key // empty')}"
     fi
+  fi
 
-    # Validate required files exist
-    if [ ! -f "$ca_key_file" ]; then
-        echoe "CA private key file '$ca_key_file' does not exist"
-        if [ -n "$default_ca" ]; then
-            echoe "Check if default CA '$default_ca' is properly configured"
-        fi
-        return 1
+  # Validate required files exist
+  if [ ! -f "$ca_key_file" ]; then
+    echoe "CA private key file '$ca_key_file' does not exist"
+    if [ -n "$default_ca" ]; then
+      echoe "Check if default CA '$default_ca' is properly configured"
     fi
+    return 1
+  fi
 
-    if [ ! -f "$ca_cert_file" ]; then
-        echoe "CA certificate file '$ca_cert_file' does not exist"
-        if [ -n "$default_ca" ]; then
-            echoe "Check if default CA '$default_ca' is properly configured"
-        fi
-        return 1
+  if [ ! -f "$ca_cert_file" ]; then
+    echoe "CA certificate file '$ca_cert_file' does not exist"
+    if [ -n "$default_ca" ]; then
+      echoe "Check if default CA '$default_ca' is properly configured"
     fi
+    return 1
+  fi
 
-    # Create CRL output directory if it doesn't exist
-    crl_dir="$(dirname "$crl_outfile")"
-    if [ ! -d "$crl_dir" ]; then
-        mkdir -p "$crl_dir" || {
-            echoe "Failed to create directory '$crl_dir'"
-            return 1
-        }
-    fi
+  # Create CRL output directory if it doesn't exist
+  crl_dir="$(dirname "$crl_outfile")"
+  if [ ! -d "$crl_dir" ]; then
+    mkdir -p "$crl_dir" || {
+      echoe "Failed to create directory '$crl_dir'"
+      return 1
+    }
+  fi
 
-    # Get or create CA index for tracking certificates
-    ca_index=$(find "cert" "$ca_cert_file")
+  # Get or create CA index for tracking certificates
+  ca_index=$(find "cert" "$ca_cert_file")
+  if [ -z "$ca_index" ]; then
+    ca_index=$(find_name_by_key_value "key" "$ca_key_file")
     if [ -z "$ca_index" ]; then
-        ca_index=$(find_name_by_key_value "key" "$ca_key_file")
-        if [ -z "$ca_index" ]; then
-            echoe "Can't find CA index: $ca_index"
-        fi
+        echoe "Can't find CA index: $ca_index"
+    fi
+  fi
+
+  # Handle file naming like create_private_key does
+  if [ -f "$crl_outfile" ]; then
+    echo "CRL file already exists. Changing name to... "
+    crl_outfile="${crl_outfile%.*}-${RAND}.${crl_outfile##*.}"
+    basename "$crl_outfile"
+  fi
+
+
+  # First check if config already exists in index
+  config_file=$(get_value_from_index "$ca_index" "cfg")
+
+  # Create SSL config only if no existing config found and ssl_cfg is empty
+  if [ -z "$config_file" ] || [ ! -f "$config_file" ]; then
+    # Create temporary config file and add to index
+    echoe "Couldn't find ssl_config file: $config_file"
+  fi
+
+  # In case user wants to keep cfg file after CRL generation
+  if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+    echo "Config file already exists. Backing up old one..."
+    backup_and_rename "cfg" "$ca_index" "$config_file" || {
+      echoe "Failed to backup existing config file"
+      return 1
+    }
+  fi
+
+  add_to_ssl_keys_database "$ca_index" "cfg" "$config_file"
+
+  # Initialize OpenSSL CA database files if they don't exist
+  index_txt="$DC_DIR/index.txt"
+  crlnumber_file="$DC_DIR/crlnumber"
+
+  if [ ! -f "$index_txt" ]; then
+    touch "$index_txt"
+    chmod 600 "$index_txt"
+  fi
+
+  if [ ! -f "$crlnumber_file" ]; then
+    echo "01" > "$crlnumber_file"
+    chmod 600 "$crlnumber_file"
+  fi
+
+
+  # Generate the CRL - following create_certificate_signing_request pattern
+  echo "Generating Certificate Revocation List..."
+  echo "CA Certificate: $ca_cert_file"
+  echo "CA Private Key: $ca_key_file"
+  echo "Output CRL: $crl_outfile"
+  echo "Valid for: $crl_days days"
+
+  (
+    # Handle encrypted private key if password is provided - same pattern as create_certificate_signing_request
+    if [ -n "$ca_pass" ]; then
+
+      salt_file="$(get_value_from_index "$ca_index" "salt")"
+
+      if [ ! -f "$salt_file" ]; then
+        echoe "Salt file $salt_file does not exist"
+        rm -f -- "$config_file"
+        return 1
+      fi
+
+      # Get password content
+      if [ -f "$ca_pass" ]; then
+        ca_pass_content="$(cat "$ca_pass")"
+      else
+        ca_pass_content="$ca_pass"
+      fi
+
+      # Generate derived key for decryption
+      _create_argon2id_derived_key_pw "$ca_pass_content" "$salt_file" | \
+        openssl ca -gencrl \
+          -keyfile "$ca_key_file" \
+          -cert "$ca_cert_file" \
+          -out "$crl_outfile" \
+          -config "$config_file" \
+          -passin "stdin" 2>/dev/null || {
+        echoe "Failed to generate CRL with encrypted key"
+        rm -f -- "$config_file"
+        return 1
+      }
+    else
+      # Generate CRL without password
+      openssl ca -gencrl \
+        -keyfile "$ca_key_file" \
+        -cert "$ca_cert_file" \
+        -out "$crl_outfile" \
+        -config "$config_file" 2>/dev/null || {
+        echoe "Failed to generate CRL"
+        rm -f -- "$config_file"
+        return 1
+      }
     fi
 
-    # Handle file naming like create_private_key does
-    if [ -f "$crl_outfile" ]; then
-        echo "CRL file already exists. Changing name to... "
-        crl_outfile="${crl_outfile%.*}-${RAND}.${crl_outfile##*.}"
-        basename "$crl_outfile"
+    # Set permissions
+
+    # Add CRL to index
+    add_to_ssl_keys_database "$ca_index" "crl" "$crl_outfile"
+
+    # Verify the generated CRL
+    if openssl crl -in "$crl_outfile" -noout -text >/dev/null 2>&1; then
+        echo "✓ CRL generated and verified successfully"
+    else
+        echo "Warning: CRL was generated but verification failed"
     fi
 
+    # Display CRL information
+    echo ""
+    echo "CRL Details:"
+    crl_issuer=$(openssl crl -in "$crl_outfile" -noout -issuer | sed 's/issuer=//')
+    echo "  Issuer: $crl_issuer"
+    openssl crl -in "$crl_outfile" -noout -lastupdate -nextupdate | sed 's/^/  /'
 
-    # First check if config already exists in index
-    config_file=$(get_value_from_index "$ca_index" "cfg")
+    # Count revoked certificates
+    revoked_count=$(openssl crl -in "$crl_outfile" -noout -text | grep -c "Serial Number:" || echo "0")
+    echo "  Revoked Certificates: $revoked_count"
 
-    # Create SSL config only if no existing config found and ssl_cfg is empty
-    if [ -z "$config_file" ] || [ ! -f "$config_file" ]; then
-        # Create temporary config file and add to index
-        echoe "Couldn't find ssl_config file: $config_file"
-    fi
+    echo ""
+    echo "Certificate Revocation List generated successfully!"
 
-    # In case user wants to keep cfg file after CRL generation
-    if [ -n "$config_file" ] && [ -f "$config_file" ]; then
-        echo "Config file already exists. Backing up old one..."
-        backup_and_rename "cfg" "$ca_index" "$config_file" || {
-            echoe "Failed to backup existing config file"
-            return 1
-        }
-    fi
-
-    add_to_ssl_keys_database "$ca_index" "cfg" "$config_file"
-
-    # Initialize OpenSSL CA database files if they don't exist
-    index_txt="$DC_DIR/index.txt"
-    crlnumber_file="$DC_DIR/crlnumber"
-
-    if [ ! -f "$index_txt" ]; then
-        touch "$index_txt"
-        chmod 600 "$index_txt"
-    fi
-
-    if [ ! -f "$crlnumber_file" ]; then
-        echo "01" > "$crlnumber_file"
-        chmod 600 "$crlnumber_file"
-    fi
-
-
-    # Generate the CRL - following create_certificate_signing_request pattern
-    echo "Generating Certificate Revocation List..."
-    echo "CA Certificate: $ca_cert_file"
-    echo "CA Private Key: $ca_key_file"
-    echo "Output CRL: $crl_outfile"
-    echo "Valid for: $crl_days days"
-
-    (
-        # Handle encrypted private key if password is provided - same pattern as create_certificate_signing_request
-        if [ -n "$ca_pass" ]; then
-
-            salt_file="$(get_value_from_index "$ca_index" "salt")"
-
-            if [ ! -f "$salt_file" ]; then
-                echoe "Salt file $salt_file does not exist"
-                rm -f -- "$config_file"
-                return 1
-            fi
-
-            # Get password content
-            if [ -f "$ca_pass" ]; then
-                ca_pass_content="$(cat "$ca_pass")"
-            else
-                ca_pass_content="$ca_pass"
-            fi
-
-            # Generate derived key for decryption
-            _create_argon2id_derived_key_pw "$ca_pass_content" "$salt_file" | \
-                openssl ca -gencrl \
-                    -keyfile "$ca_key_file" \
-                    -cert "$ca_cert_file" \
-                    -out "$crl_outfile" \
-                    -config "$config_file" \
-                    -passin "stdin" 2>/dev/null || {
-                echoe "Failed to generate CRL with encrypted key"
-                rm -f -- "$config_file"
-                return 1
-            }
-        else
-            # Generate CRL without password
-            openssl ca -gencrl \
-                -keyfile "$ca_key_file" \
-                -cert "$ca_cert_file" \
-                -out "$crl_outfile" \
-                -config "$config_file" 2>/dev/null || {
-                echoe "Failed to generate CRL"
-                rm -f -- "$config_file"
-                return 1
-            }
-        fi
-
-        # Set permissions
-
-        # Add CRL to index
-        add_to_ssl_keys_database "$ca_index" "crl" "$crl_outfile"
-
-        # Verify the generated CRL
-        if openssl crl -in "$crl_outfile" -noout -text >/dev/null 2>&1; then
-            echo "✓ CRL generated and verified successfully"
-        else
-            echo "Warning: CRL was generated but verification failed"
-        fi
-
-        # Display CRL information
-        echo ""
-        echo "CRL Details:"
-        crl_issuer=$(openssl crl -in "$crl_outfile" -noout -issuer | sed 's/issuer=//')
-        echo "  Issuer: $crl_issuer"
-        openssl crl -in "$crl_outfile" -noout -lastupdate -nextupdate | sed 's/^/  /'
-
-        # Count revoked certificates
-        revoked_count=$(openssl crl -in "$crl_outfile" -noout -text | grep -c "Serial Number:" || echo "0")
-        echo "  Revoked Certificates: $revoked_count"
-
-        echo ""
-        echo "Certificate Revocation List generated successfully!"
-
-        return 0
-    )
-    return $?
+    return 0
+  )
+  return $?
 }
 
 
