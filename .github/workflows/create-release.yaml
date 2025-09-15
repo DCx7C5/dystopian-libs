@@ -48,7 +48,7 @@ jobs:
           echo "gpgdir=$tmpdir" >> $GITHUB_OUTPUT
           touch "$tmpdir/pubring.kbx"
           echo "${{ secrets.GPG_PRIVATE_KEY }}" | \
-          openssl aes-256-cbc -a -d -pbkdf2 -pass "pass:$GPG_PASSPHRASE" | \
+          openssl aes-256-cbc -a -d -pbkdf2 -pass "pass:${{ secrets.GPG_PASSPHRASE }}" | \
           gpg --batch --homedir "$tmpdir" --import
           repo="${GITHUB_REPOSITORY##*/}"
           ver="${{ steps.meta.outputs.ver }}"
