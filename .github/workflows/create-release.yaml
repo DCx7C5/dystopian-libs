@@ -53,8 +53,8 @@ jobs:
           repo="${GITHUB_REPOSITORY##*/}"
           ver="${{ steps.meta.outputs.ver }}"
           gpgid="${{ vars.GPG_PRIVATE_KEY_ID }}"
-          gpg --batch --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz"
-          gpg --batch --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz.sha256"
+          gpg --batch --notty --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz"
+          gpg --batch --notty --homedir "$tmpdir" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz.sha256"
 
       - name: Leave no keys
         shell: bash
