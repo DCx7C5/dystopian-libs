@@ -57,8 +57,9 @@ echos() {
 
 echosv() {
   istr=""
-  [ "$VERBOSE" -eq 1 ] && [ "$DEBUG" -eq 1 ] && istr="    INFO:"
-  printf "\033[1m\033[1;32m>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
+  if [ "$VERBOSE" -eq 1 ] || { [ "$DEBUG" -eq 1 ] && istr="    INFO:"; }; then
+    printf "\033[1m\033[1;32m>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
+  fi
 }
 
 
@@ -109,6 +110,16 @@ shorthelp() {
   help | sed -n "/^  $1/,/^$/p"
 }
 
+sslhelp() {
+  echo ""
+  help | sed -n "/^SSL Com/,/^GPG/{/^GPG/d; p}"
+}
+
+
+gpghelp() {
+  echo ""
+  help | sed -n "/^GPG Com/,/^Main/{/^Main/d; p}"
+}
 
 reset_dcrypto() {
     ssl="${1:-false}"
@@ -122,11 +133,11 @@ reset_dcrypto() {
             echos "Backup successful @ /etc/dystopian-crypto.bkp"
         fi
         if [ -n "$ssl" ] && [ "$ssl" = "true" ]; then
-            rm -rf -- "${DC_CA}" "{$DC_CERT}" "${DC_CRL}" 2>/dev/null || {
+            rm -rf -- "${DC_CA}" "${DC_CERT}" "${DC_CRL}" 2>/dev/null || {
                 echoe "Problem resetting dystopian-crypto ssl"
                 exit 1
             }
-            mkdir -p "$DC_CAKEY" "$DC_KEY" "$DC_CRL" || {
+            mkdir -p -- "$DC_CAKEY" "$DC_KEY" "$DC_CRL" || {
                 echoe "Problem creating ssl directories"
                 exit 1
             }
@@ -1051,59 +1062,3 @@ preparse() {
 }
 
 
-receive_Xbytes() {
-  maxb="$1"
-  tmpfile="$(mktemp -- "/tmp/tmp.XXXXXXX")"
-  nc -l "$2" -- "$3" | dd bs=1 count="$maxb" >/dev/null 2>&1 > "$tmpfile" || {
-    echoe "Error receiving $maxb bytes on $2:$3"
-    return 1
-  }
-  cat -- "$tmpfile" || {
-    echoe "Error reading bytes from file."
-    return 1
-  }
-  rm -f -- "$tmpfile" || {
-    echoe "Error deleting tmp file: $tmpfile"
-    return 1
-  }
-  return 0
-}
-
-
-send_Xbytes() {
-    host="$3"
-    port="$4"
-    input="$2"
-    max_len="$1"
-    if [ -z "$input" ]; then
-        printf "Error: No input string provided\n" >&2
-        return 1
-    fi
-    if ! printf "%s" "$max_len" | grep -q '^[0-9]\+$' || [ "$max_len" -eq 0 ]; then
-        printf "Error: max_len must be a positive integer\n" >&2
-        return 1
-    fi
-    input_len=$(printf "%s" "$input" | wc -c)
-    if [ "$input_len" -gt "$max_len" ]; then
-        printf "Error: Input string exceeds %s bytes\n" "$max_len" >&2
-        return 1
-    fi
-    padded=$(printf "%-*s" "$max_len" "$input")
-    printf "%b" "$padded" | tr "\x20" '\0' | nc "$host" "$port"
-    if [ $? -ne 0 ]; then
-        printf "Error: Failed to send data via nc\n" >&2
-        return 1
-    fi
-    return 0
-}
-
-
-nc_server_receive() {
-  temp_file=$(mktemp -- "/tmp/tmp.XXXXXXX")
-  nc -l
-}
-
-
-nc_client() {
-  :
-}
