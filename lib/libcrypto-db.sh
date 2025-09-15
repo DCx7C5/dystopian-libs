@@ -29,19 +29,59 @@ get_value_from_keys_index() {
         '.ssl.keys[$idx][$value] // empty' -- "$DC_DB"
 }
 
-get_value_from_caroot_index() {
-    jq -r \
-        --arg idx "$1" \
-        --arg value "$2" \
-        '.ssl.ca.root[$idx][$value] // empty' -- "$DC_DB"
+get_value_from_caroot() {
+  if [ $# -eq 2 ]; then
+    jq -r --arg idx "$1" \
+          --arg value "$2" \
+          '.ssl.ca.root[$idx][$value] // empty' -- "$DC_DB" || {
+            echoe "Failed getting value from db file"
+            return 1
+        }
+  elif [ $# -eq 1 ]; then
+    jq -r --arg idx "$1" \
+          '.ssl.ca.root[$idx] // empty' -- "$DC_DB" || {
+            echoe "Failed getting value from db file"
+            return 1
+          }
+  fi
+  return 0
 }
 
-get_value_from_caint_index() {
-    jq -r \
-        --arg idx "$1" \
-        --arg value "$2" \
-        '.ssl.ca.intermediate[$idx][$value] // empty' -- "$DC_DB"
+get_value_from_caint() {
+  if [ $# -eq 2 ]; then
+    jq -r --arg idx "$1" \
+          --arg value "$2" \
+          '.ssl.ca.intermediate[$idx][$value] // empty' -- "$DC_DB" || {
+            echoe "Failed getting value from db file"
+            return 1
+        }
+  elif [ $# -eq 1 ]; then
+    jq -r --arg idx "$1" \
+          '.ssl.ca.intermediate[$idx] // empty' -- "$DC_DB" || {
+            echoe "Failed getting value from db file"
+            return 1
+          }
+  fi
+  return 0
 }
+
+get_defaultCA() {
+  jq -r '.defaultCA // empty' -- "$DC_DB" || {
+    echoe "Not able to get defaultCA entry"
+    return 1
+  }
+  return 0
+}
+
+get_defaultRootCA() {
+  jq -r '.defaultRootCA // empty' -- "$DC_DB" || {
+    echoe "Not able to get defaultRootCA entry"
+    return 1
+  }
+  return 0
+}
+
+
 
 get_defaultCA_key() {
     index=$(jq -r '.defaultCA // empty' -- "$DC_DB")
@@ -69,15 +109,16 @@ reset_ssl_index() {
     }
 
     # Reset SSL section to default state
-    if jq '.ssl = {
-        defaultCA: "",
-        encrypted: [],
-        keys: {},
-        ca: {
-            root: {},
-            intermediate: {}
-        }
-    }' -- "$DC_DB" > "$temp_file"; then
+    if jq '.defaultRootCA = "" |
+           .defaultCA = "" |
+           .ssl = {
+              encrypted: [],
+              keys: {},
+           ca: {
+             root: {},
+             intermediate: {}
+           }
+        }' -- "$DC_DB" > "$temp_file"; then
         mv -- "$temp_file" "$DC_DB" || {
             echoe "Failed to reset SSL index"
             rm -f -- "$temp_file" || true
@@ -93,20 +134,6 @@ reset_gpg_index() {
         return 1
     }
 
-    # Reset GPG section to default state
-    if jq '.gpg = {
-        defaultKey: "",
-        defaultSign: "",
-        defaultAuth: "",
-        defaultEncrypt: "",
-        keys: {}
-    }' -- "$DC_DB" > "$temp_file"; then
-        mv -- "$temp_file" "$DC_DB" || {
-            echoe "Failed to reset GPG index"
-            rm -f -- "$temp_file" || true
-            return 1
-        }
-    fi
     echosv "GPG index reset to default state"
 }
 
@@ -140,18 +167,24 @@ delete_key_from_keys_index() {
     return 0
 }
 
+has_defaultRootCA() {
+  jq -e '.defaultRootCA? // "" | (type == "string") and (length > 0)' -- "$DC_DB" >/dev/null 2>&1
+}
 
-set_as_default_CA() {
+has_defaultCA() {
+  jq -e '.defaultCA? // "" | (type == "string") and (length > 0)' -- "$DC_DB" >/dev/null 2>&1
+}
+
+
+set_defaultCA() {
     index="$1"
-
-    echod "Starting set_as_default_CA with parameters:"
-    echod " index: $index"
 
     # Check index exists in database
     if ! index_exists "$index"; then
         echoe "Index: $index not found in database."
         return 1
     fi
+
     temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
     jq -r --arg idx "$index" '.defaultCA = $idx' -- "$DC_DB" > "$temp_file" || {
         echoe "Setting $index as defaultCA failed"
@@ -159,16 +192,37 @@ set_as_default_CA() {
         return 1
     }
 
-    mv "temp_file" "$DC_DB" || {
+    mv "$temp_file" "$DC_DB" || {
         echoe "Overwriting database with temporary db failed"
         rm -f -- "$temp_file"
         return 1
     }
-
-    echos "Setting $index as dystopian-crypto's .defaultCA succesful"
     return 0
 }
 
+set_defaultRootCA() {
+    index="$1"
+
+    # Check index exists in database
+    if ! index_exists "$index"; then
+        echoe "Index: $index not found in database."
+        return 1
+    fi
+
+    temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
+    jq -r --arg idx "$index" '.defaultRootCA = $idx' -- "$DC_DB" > "$temp_file" || {
+        echoe "Setting $index as defaultRootCA failed"
+        rm -f -- "$temp_file"
+        return 1
+    }
+
+    mv -- "$temp_file" "$DC_DB" || {
+        echoe "Overwriting database with temporary db failed"
+        rm -f -- "$temp_file"
+        return 1
+    }
+    return 0
+}
 
 delete_key_from_ca_index() {
     index="$1"
