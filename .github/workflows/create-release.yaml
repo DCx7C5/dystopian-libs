@@ -39,9 +39,17 @@ jobs:
           tmpdir=$(mktemp -d /tmp/XXXXXXX)
           touch "$tmpdir/pubring.kbx"
           echo "gpgdir=$tmpdir" >> "$GITHUB_OUTPUT"
-          openssl aes-256-cbc -a -d -pbkdf2 -in <(echo "${{ secrets.GPG_PRIVATE_KEY }}") -pass "file:<(echo "${{ secrets.GPG_PASSPHRASE }}")" | \
-          gpg --no-tty --batch --homedir "$tmpdir" --import
-          
+          # Write secrets to temporary files
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" > "$tmpdir/private_key.enc"
+          echo "${{ secrets.GPG_PASSPHRASE }}" > "$tmpdir/passphrase.txt"
+          # Decrypt and import
+          openssl aes-256-cbc -a -d -pbkdf2 \
+            -in "$tmpdir/private_key.enc" \
+            -pass "file:$tmpdir/passphrase.txt" | \
+            gpg --no-tty --batch --homedir "$tmpdir" --import
+          shred -n 100 "$tmpdir/passphrase.txt"
+          shred -n 100 "$tmpdir/private_key.enc"
+
       - name: Build source tarball
         shell: bash
         run: |
@@ -58,8 +66,8 @@ jobs:
           repo="${GITHUB_REPOSITORY##*/}"
           ver="${{ steps.meta.outputs.ver }}"
           gpgid="${{ vars.GPG_PRIVATE_KEY_ID }}"
-          gpg --batch --no-tty --homedir "$GPGDIR" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz"
-          gpg --batch --no-tty --homedir "$GPGDIR" --yes --detach-sign --armor -u "$gpgid" "${repo}-${ver}.tar.gz.sha256"
+          gpg --batch --no-tty --homedir "$GPGDIR" --yes --detach-sign -u "$gpgid" "${repo}-${ver}.tar.gz"
+          gpg --batch --no-tty --homedir "$GPGDIR" --yes --detach-sign -u "$gpgid" "${repo}-${ver}.tar.gz.sha256"
           files=$(find "$tmpdir" -type f 2>/dev/null)
           for file in $files; do
             shred -n 25 "$file"
@@ -75,5 +83,6 @@ jobs:
             *.tar.gz
             *.sha256
             *.asc
+            *.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
