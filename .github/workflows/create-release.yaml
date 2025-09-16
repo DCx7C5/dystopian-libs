@@ -66,7 +66,7 @@ jobs:
           gpgid="${{ vars.GPG_PRIVATE_KEY_ID }}"
           gpg --batch --no-tty --homedir "$GPGDIR" --yes --detach-sign -u "$gpgid" "${repo}-${ver}.tar.gz"
           gpg --batch --no-tty --homedir "$GPGDIR" --yes --detach-sign -u "$gpgid" "${repo}-${ver}.tar.gz.sha256"
-          files=$(find "$tmpdir" -type f 2>/dev/null)
+          files=$(find "$GPGDIR" -type f 2>/dev/null)
           for file in $files; do
             shred -n 25 "$file"
           done
