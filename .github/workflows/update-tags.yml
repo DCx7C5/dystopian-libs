@@ -41,6 +41,7 @@ jobs:
 
       - name: Import GPG Private Key
         id: import_gpg
+        if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -64,7 +65,7 @@ jobs:
           version="v${{ steps.get_next_version.outputs.version }}"
           git config --global user.signingkey "$GPG_PRIVATE_KEY_ID"
           git config --global tag.gpgSign true
-          git tag -s "$version" -m "Release $version"
+          git tag "$version" -m "Release $version" -s
           git push origin "$version"
         env:
           GPG_PRIVATE_KEY_ID: ${{ vars.GPG_PRIVATE_KEY_ID }}
