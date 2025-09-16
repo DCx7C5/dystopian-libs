@@ -26,8 +26,9 @@ jobs:
       - name: Check for [RELEASE] in commit message
         id: check_commit
         run: |
+          set -euo pipefail
           LATEST_COMMIT_MESSAGE=$(git log -1 --pretty=%B)
-          if echo "$LATEST_COMMIT_MESSAGE" | grep -q "\[RELEASE\]"; then
+          if echo "$LATEST_COMMIT_MESSAGE" | grep -qE "\[RELEASE\]|RELEASE"; then
             echo "has_release_keyword=true" >> $GITHUB_OUTPUT
           else
             echo "has_release_keyword=false" >> $GITHUB_OUTPUT
@@ -38,15 +39,22 @@ jobs:
         if: steps.check_commit.outputs.has_release_keyword == 'true'
         uses: thenativeweb/get-next-version@2.6.0
 
-      - name: Import GPG key
-        if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
-        run: echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      - name: Import GPG Private Key
+        id: import_gpg
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir=$(mktemp -d /tmp/XXXXXXX)
+          touch "$tmpdir/pubring.kbx"
+          echo "gpgdir=$tmpdir" >> "$GITHUB_OUTPUT"
+          openssl aes-256-cbc -a -d -pbkdf2 -in <(echo "${{ secrets.GPG_PRIVATE_KEY }}") -pass "file:<(echo "${{ secrets.GPG_PASSPHRASE }}")" | \
+          gpg --no-tty --batch --homedir "$tmpdir" --import
 
       - name: Create and push tag
+        id: create_tag
         if: steps.check_commit.outputs.has_release_keyword == 'true' && steps.get_next_version.outputs.hasNextVersion == 'true'
         run: |
+          set -euo pipefail
           version="v${{ steps.get_next_version.outputs.version }}"
           git config --global user.signingkey "$GPG_PRIVATE_KEY_ID"
           git config --global tag.gpgSign true
