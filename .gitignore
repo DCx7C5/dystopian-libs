@@ -1,2 +1,13 @@
 .idea/
 .venv/
+
+# Kompilierte Dateien
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Sonstige
+.DS_Store
