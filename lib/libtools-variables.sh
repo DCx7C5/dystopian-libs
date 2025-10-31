@@ -6,8 +6,10 @@ AUTHOR="DCx7C5 <dcxdevelopment@protonmail.com>"
 DYSTOPIAN_USER="root"
 DC_POS_ARGS=
 
+DYSTOPIAN_CFGDIR="/etc"
+
 # SSL / GnuPG
-DC_DIR="/etc/dystopian-crypto"
+DC_DIR="$DYSTOPIAN_CFGDIR/dystopian-crypto"
 DC_CA="$DC_DIR/ca"
 DC_CERT="$DC_DIR/cert"
 DC_KEY="$DC_CERT/private"
@@ -16,11 +18,10 @@ DC_CAKEY="$DC_CA/private"
 DC_OLD="$DC_DIR/old"
 DC_DB="$DC_DIR/crypto-db.json"
 DC_GNUPG="$DC_DIR/gnupg"
-DC_FAKE_GNUPG="/tmp/dystopian-crypto-$RAND"
 
 # SECUREBOOT
 SECUREBOOT_ENABLED=0
-DS_DIR="/etc/dystopian-secboot"
+DS_DIR="$DYSTOPIAN_CFGDIR/dystopian-secboot"
 DS_DB="$DS_DIR/secboot-db.json"
 DC_MS_DIR="$DS_DIR/ms"
 PK_GUID="8be4df61-93ca-11d2-aa0d-00e098032b8c"
