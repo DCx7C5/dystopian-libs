@@ -570,3 +570,36 @@ remove_from_encrypted_db_by_path() {
     return 0
 }
 
+get_cert_type() {
+  if ct=$(! jq -r --arg idx "$1" '.ssl.certs + .ssl.rootCAs + .ssl.intermediateCAs | to_entries[] | select(.key == $idx) | .value.type // empty' -- "$DC_DB"); then
+    echoe "Couldn't get type from index"
+    return 1
+  fi
+  case "$ct" in
+    intermediate) ct="intermediateCAs" ;;
+    root) ct="rootCAs" ;;
+    client|server) ct="certs";;
+  esac
+  echo "$ct"
+}
+
+
+delete_ssl_index() {
+  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
+    echoe "Failed creating temporary database file"
+    return 1
+  }
+
+  if ! jq -e --arg idx "$1" --arg ctype "$(get_cert_type "$1")" \
+        'del(.ssl[$ctype][$idx])' -- "$DC_DB" > "$temp_file";then
+    echoe "Something went wrong"
+    return 1
+  fi
+
+  mv -- "$temp_file" "$DC_DB" || {
+    echoe "Not able to save temporary db as database file."
+    rm -f -- "$temp_file"
+    return 1
+  }
+  return 0
+}

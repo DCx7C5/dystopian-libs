@@ -242,10 +242,10 @@ show_index() {
     if [ "$show_keys" = "true" ] || [ "$show_ca" = "false" ]; then
         echoi "Keys and Certificates:"
         echo "  ----------------------"
-        key_count=$(jq -r '.ssl.keys | length' -- "$DC_DB")
+        key_count=$(jq -r '.ssl.certs | length' -- "$DC_DB")
 
         if [ "$VERBOSE" -eq 1 ]; then
-            jq -r '.ssl.keys | to_entries[] | "  - " + .key + ": " + (.value | to_entries | map(.key + "=" + .value) | join(", "))' -- "$DC_DB" 2>/dev/null
+            jq -r '.ssl.certs | to_entries[] | "  - " + .key + ": " + (.value | to_entries | map(.key + "=" + .value) | join(", "))' -- "$DC_DB" 2>/dev/null
         fi
         echo ""
         echos "Total key entries: $key_count"
@@ -277,12 +277,16 @@ cleanup_dcrypto_files() {
     # Clean specific index
     if [ -n "$cleanup_index" ]; then
         echoi "Cleaning up specific index: $cleanup_index"
-        if ! jq -e ".ssl.keys.\"$cleanup_index\"" -- "$DC_DB" >/dev/null 2>&1; then
-            echoe "Index $cleanup_index does not exist in $DC_DB"
-            return 1
+        if ! jq -e ".ssl.certs.\"$cleanup_index\"" -- "$DC_DB" >/dev/null 2>&1; then
+          if ! jq -e ".ssl.intermediateCAs.\"$cleanup_index\"" -- "$DC_DB" >/dev/null 2>&1; then
+            if ! jq -e ".ssl.rootCAs.\"$cleanup_index\"" -- "$DC_DB" >/dev/null 2>&1; then
+              echoe "Index $cleanup_index does not exist in $DC_DB"
+              return 1
+            fi
+          fi
         fi
         if [ "$cleanup_dry_run" != "true" ]; then
-            _cleanup_index "$cleanup_index" || {
+            delete_ssl_index "$cleanup_index" || {
                 echoe "Failed to clean index $cleanup_index"
                 return 1
             }
