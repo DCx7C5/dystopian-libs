@@ -321,34 +321,12 @@ delete_key_from_ca_index() {
 }
 
 
-cleanup_index() {
-  index="$1"
-  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
-    echoe "Failed creating temporary database file"
-    return 1
-  }
-  jq --arg idx "$index" 'del(.ssl.certs[$idx])' -- "$DC_DB" > "$temp_file" || {
-    echoe "Failed deleting contents of ssl: keys: $index"
-    rm -f -- "$temp_file"
-    return 1
-  }
-
-  mv -- "$temp_file" "$DC_DB" || {
-    echoe "Failed to move temporary database file to $DC_DB"
-    rm -f -- "$temp_file"
-    return 1
-  }
-  return 0
-}
-
-
 default_ca_exists() {
     if jq -e '.defaultCA // empty' -- "$DC_DB" >/dev/null; then
         return 0
     fi
     return 1
 }
-
 
 
 root_ca_index_exists() {
@@ -570,3 +548,38 @@ remove_from_encrypted_db_by_path() {
     return 0
 }
 
+get_cert_type() {
+  ct=$(jq -r --arg idx "$1" '.ssl.certs + .ssl.rootCAs + .ssl.intermediateCAs | to_entries[] | select(.key == $idx) | .value.type' -- "$DC_DB")
+  case "$ct" in
+    intermediate) ct="intermediateCAs" ;;
+    root) ct="rootCAs" ;;
+    client|server|*) ct="certs";;
+  esac
+  echo "$ct"
+}
+
+
+delete_ssl_index() {
+  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
+    echoe "Failed creating temporary database file"
+    return 1
+  }
+  cert_type="$(get_cert_type "$1")"
+  if [ -z "$cert_type" ]; then
+    echoe "Couldn't determine cert type or index doesn't exist"
+    return 1
+  fi
+  echoe "$cert_type"
+  if ! jq -e --arg idx "$1" --arg ctype "$cert_type" \
+        'del(.ssl[$ctype][$idx])' -- "$DC_DB" > "$temp_file";then
+    echoe "Something went wrong while deleting the index."
+    return 1
+  fi
+
+  mv -- "$temp_file" "$DC_DB" || {
+    echoe "Not able to save temporary db as database file."
+    rm -f -- "$temp_file"
+    return 1
+  }
+  return 0
+}

@@ -242,10 +242,10 @@ show_index() {
     if [ "$show_keys" = "true" ] || [ "$show_ca" = "false" ]; then
         echoi "Keys and Certificates:"
         echo "  ----------------------"
-        key_count=$(jq -r '.ssl.keys | length' -- "$DC_DB")
+        key_count=$(jq -r '.ssl.certs | length' -- "$DC_DB")
 
         if [ "$VERBOSE" -eq 1 ]; then
-            jq -r '.ssl.keys | to_entries[] | "  - " + .key + ": " + (.value | to_entries | map(.key + "=" + .value) | join(", "))' -- "$DC_DB" 2>/dev/null
+            jq -r '.ssl.certs | to_entries[] | "  - " + .key + ": " + (.value | to_entries | map(.key + "=" + .value) | join(", "))' -- "$DC_DB" 2>/dev/null
         fi
         echo ""
         echos "Total key entries: $key_count"
@@ -277,12 +277,12 @@ cleanup_dcrypto_files() {
     # Clean specific index
     if [ -n "$cleanup_index" ]; then
         echoi "Cleaning up specific index: $cleanup_index"
-        if ! jq -e ".ssl.keys.\"$cleanup_index\"" -- "$DC_DB" >/dev/null 2>&1; then
-            echoe "Index $cleanup_index does not exist in $DC_DB"
-            return 1
+        if ! jq -e --arg idx "$cleanup_index" '.ssl[] | to_entries[] | select(.key == $idx)' -- "$DC_DB" >/dev/null 2>&1; then
+          echoe "Index $cleanup_index does not exist in $DC_DB"
+          return 1
         fi
         if [ "$cleanup_dry_run" != "true" ]; then
-            _cleanup_index "$cleanup_index" || {
+            delete_ssl_index "$cleanup_index" || {
                 echoe "Failed to clean index $cleanup_index"
                 return 1
             }
@@ -297,29 +297,46 @@ cleanup_dcrypto_files() {
     if [ "$cleanup_orphaned" = "true" ]; then
         echoi "Finding orphaned files..."
         tmpfile_orphaned=$(mktemp) || { echoe "Failed to create temporary import_file for orphaned files"; return 1; }
-        find "$DC_DIR" -type f \( -name "*.pem" -o -name "*.csr" -o -name "*.conf" -o -name "*.salt" \) > "$tmpfile_orphaned"
+        find "$DC_DIR" -type f \( -name "*.pem" -o -name "*.csr" -o -name "*.conf" -o -name "*.salt" -o -name "*.srl" \) > "$tmpfile_orphaned"
         found_orphaned=false
-        while IFS= read -r import_file < "$tmpfile_orphaned"; do
+        while read -r import_file; do
             file_path="$(realpath "$import_file")"
+            file_name="$(basename "$import_file")"
+            file_ext="${file_name#*.*.*.}"
+            [ -z "$file_ext" ] && file_ext="${file_name#*.*.}"
+            [ -z "$file_ext" ] && file_ext="${file_name#*.}"
+            [ -z "$file_ext" ] && return 1
             echod "Checking if import_file is orphaned: $file_path"
-            if ! jq -r '.ssl.keys | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" >/dev/null 2>&1 && \
-               ! jq -r '.ssl.rootCAs | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" >/dev/null 2>&1 && \
-               ! jq -r '.ssl.intermediateCAs | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" >/dev/null 2>&1; then
+            case "$file_ext" in
+              csr) k="csr";;
+              conf|cfg) k="cfg";;
+              salt) k="salt";;
+              pem)
+                case "$file_name" in
+                  ^ca-key.*|^key.*) k="key";;
+                  ^ca.*|^cert.*) k="cert";;
+                  ^fullchain) k="fullchain";;
+                esac
+                ;;
+            esac
+            echoe tesdtr
+            idx="$(find_index_by_key_value "$k" "$file_path")"
+            if [ -z "$idx" ] || [ "$idx" = "" ]; then
                 found_orphaned=true
-                echoi "Orphaned import_file: $file_path"
+                echoi "Orphaned file: $file_path"
                 if [ "$cleanup_dry_run" != "true" ]; then
                     rm -f -- "$file_path" || {
                         echoe "Failed to remove orphaned import_file: $file_path"
-                        continue
+                        break
                     }
                     echos "Removed orphaned import_file: $file_path"
                 else
                     echov "Dry run: Would remove orphaned import_file: $file_path"
                 fi
-            else
-                echod "File $file_path is referenced in index, skipping"
+              else
+                echoe "Found"
             fi
-        done
+        done < "$tmpfile_orphaned"
         rm -f -- "$tmpfile_orphaned"
         if [ "$found_orphaned" = "false" ]; then
             echoi "No orphaned files found"
