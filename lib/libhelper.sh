@@ -3,6 +3,9 @@
 # shellcheck disable=SC2034
 # shellcheck disable=SC2181
 
+umask 077
+
+
 echoi() {
     if [ "$QUIET" -ne 1 ]; then
         if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
@@ -44,64 +47,80 @@ echowv() {
 
 
 echoe() {
-    printf "\033[1m\033[1;31m>  ERROR:\033[0m\033[1;37m\033[1m %s\033[0m\n" "$1" >&2
+    printf "\033[1m\033[1;31m>   ERROR:\033[0m\033[1;37m\033[1m %s\033[0m\n" "$1" >&2
 }
 
 
 echos() {
-    if [ "$QUIET" -ne 1 ]; then
-        printf "\033[1m\033[1;32m>>>\033[0m\033[1;37m\033[1m %s\033[0m\n" "$1"
-    fi
+  istr=""
+  if [ "$QUIET" -ne 1 ]; then
+    [ "$DEBUG" -eq 1 ] && istr="  INFO:"
+    printf "\033[1m\033[1;32m>>>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
+  fi
 }
 
 
 echosv() {
   istr=""
-  if [ "$VERBOSE" -eq 1 ] || { [ "$DEBUG" -eq 1 ] && istr="    INFO:"; }; then
+  if [ "$VERBOSE" -eq 1 ]; then
+    [ "$DEBUG" -eq 1 ] && istr="    INFO:"
     printf "\033[1m\033[1;32m>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
   fi
 }
 
 
 askyesno() {
-    default="$2"
-    case "$default" in
-        y|Y|yes|Yes|YES)
-            question=$(printf "%s [Y/n]: " "$1")
-            default_return=0
-            ;;
-        n|N|no|No|NO)
-            question=$(printf "%s [y/N]: " "$1")
-            default_return=1
-            ;;
-        *)
-            question=$(printf "%s [y/N]: " "$1")
-            default_return=1
-            ;;
+  default="$2"
+  case "$default" in
+  y|Y|yes|Yes|YES)
+    question=$(printf "%s [Y/n]: " "$1")
+    default_return=0
+    ;;
+  n|N|no|No|NO)
+    question=$(printf "%s [y/N]: " "$1")
+    default_return=1
+    ;;
+  *)
+    question=$(printf "%s [y/N]: " "$1")
+    default_return=1
+    ;;
+  esac
+  while true; do
+    echow "$question" 1
+    read -r yesno < /dev/tty
+    case "$yesno" in
+      y|Y|j|J|yes|Yes|YES) return 0;;
+      n|N|no|NO|No) return 1;;
+      "") return $default_return;;
+      * ) ;;
     esac
-    while true; do
-        echow "$question" 1
-        read -r yesno < /dev/tty
-        case "$yesno" in
-            y|Y|j|J|yes|Yes|YES) return 0;;
-            n|N|no|NO|No) return 1;;
-            "") return $default_return;;
-            * ) ;;
-        esac
-    done
+  done
 }
 
 
+askpassword() {
+  PASSPHRASE=
+  PASSPHRASE=$(
+    exec </dev/tty
+    tty_settings=$(stty -g)
+    trap 'stty "$tty_settings"' EXIT INT TERM
+    stty -echo
+    echow "Enter passphrase: " >/dev/tty
+    IFS= read -r password
+    echo > /dev/tty
+    printf '%s\n' "$password"
+  )
+}
 
 
 is_ip() {
-    ip="$1"
-    if echo "$ip" | grep -E '^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$' >/dev/null 2>&1; then
-        return 0
-    elif echo "$ip" | grep -E '^([0-9a-fA-F]{1,4}:){0,7}[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,7}$|^::1$' >/dev/null 2>&1; then
-        return 0
-    fi
-    return 1
+  ip="$1"
+  if echo "$ip" | grep -E '^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$' >/dev/null 2>&1; then
+    return 0
+  elif echo "$ip" | grep -E '^([0-9a-fA-F]{1,4}:){0,7}[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,7}$|^::1$' >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 
@@ -109,6 +128,7 @@ shorthelp() {
   echo ""
   help | sed -n "/^  $1/,/^$/p"
 }
+
 
 sslhelp() {
   echo ""
@@ -121,50 +141,64 @@ gpghelp() {
   help | sed -n "/^GPG Com/,/^Main/{/^Main/d; p}"
 }
 
-reset_dcrypto() {
-    ssl="${1:-false}"
-    gpg="${2:-false}"
-    if askyesno "Are you sure you want to reset the config and keys?" "n";then
-        if askyesno "Do you want to backup the directory first?" "y"; then
-            cp -rf "$DC_DIR" "${DC_DIR}.bkp" 2>/dev/null || {
-                echoe "Problem backing up keys and config"
-                exit 1
-            }
-            echos "Backup successful @ /etc/dystopian-crypto.bkp"
-        fi
-        if [ -n "$ssl" ] && [ "$ssl" = "true" ]; then
-            rm -rf -- "${DC_CA}" "${DC_CERT}" "${DC_CRL}" 2>/dev/null || {
-                echoe "Problem resetting dystopian-crypto ssl"
-                exit 1
-            }
-            mkdir -p -- "$DC_CAKEY" "$DC_KEY" "$DC_CRL" || {
-                echoe "Problem creating ssl directories"
-                exit 1
-            }
-            set_permissions_and_owner "$DC_DIR" 750
-            set_permissions_and_owner "$DC_KEY" 700
-            set_permissions_and_owner "$DC_CAKEY" 700
-            reset_ssl_index
-            echos "Reset of dystopian-crypto SSL successful"
-        fi
-        if [ -n "$gpg" ] && [ "$gpg" = "true" ]; then
-            rm -rf -- "${DC_GNUPG}" 2>/dev/null || {
-              echoe "Problem resetting dystopian-crypto gpg"
-              exit 1
-            }
-            mkdir -p "$DC_GNUPG" || {
-                echoe "Failed creating new gpg home directory"
-                exit 1
-            }
-            set_permissions_and_owner "$DC_GNUPG" 700
-            reset_gpg_index
-            echos "Reset of dystopian-crypto GPG successful"
-        fi
-    else
-      echoi "Exiting dystopian-crypto. No harm was done."
-      exit 0
+
+reset_dystopian_crypto() {
+  ssl="${1:-false}"
+  gpg="${2:-false}"
+  if askyesno "Are you sure you want to reset the config and keys?" "n";then
+    if askyesno "Do you want to backup the directory first?" "y"; then
+      cp -rf "$DC_DIR" "${DC_DIR}.bkp" 2>/dev/null || {
+          echoe "Problem backing up keys and config"
+          exit 1
+      }
+      echos "Backup successful @ /etc/dystopian-crypto.bkp"
     fi
+
+    if [ -n "$ssl" ] && [ "$ssl" = "true" ]; then
+      if askyesno "Last WARNING! Answering yes will reset everything SSL related in /etc/dystopian-crypto/" "N"; then
+        rm -rf -- "${DC_CA}" "${DC_CERT}" "${DC_CRL}" 2>/dev/null || {
+            echoe "Problem resetting dystopian-crypto ssl"
+            exit 1
+        }
+        mkdir -p -- "$DC_CAKEY" "$DC_KEY" "$DC_CRL" || {
+            echoe "Problem creating ssl directories"
+            exit 1
+        }
+        set_permissions_and_owner "$DC_DIR" 750
+        set_permissions_and_owner "$DC_KEY" 700
+        set_permissions_and_owner "$DC_CAKEY" 700
+        reset_ssl_index
+        echos "Reset of dystopian-crypto SSL successful"
+      else
+        echoi "Exiting dystopian-crypto. No harm was done."
+        exit 0
+      fi
+    fi
+    if [ -n "$gpg" ] && [ "$gpg" = "true" ]; then
+      if askyesno "Last WARNING! Answering yes will reset everything GPG related in /etc/dystopian-crypto/" "N"; then
+        rm -rf -- "${DC_GNUPG}" 2>/dev/null || {
+          echoe "Problem resetting dystopian-crypto GPG"
+          exit 1
+        }
+        mkdir -p -- "$DC_GNUPG" || {
+          echoe "Failed creating new GPG home directory"
+          exit 1
+        }
+        set_permissions_and_owner "$DC_GNUPG" 700
+        reset_gpg_index
+        echos "Reset of dystopian-crypto GPG successful"
+      else
+        echoi "Exiting dystopian-crypto. No harm was done."
+        exit 0
+      fi
+    fi
+
+  else
+    echoi "Exiting dystopian-crypto. No harm was done."
+    exit 0
+  fi
 }
+
 
 # Maintenance and utility functions
 show_index() {
@@ -178,24 +212,30 @@ show_index() {
     fi
 
     echoi "dystopian-crypto Index Summary"
-    echo "  ===================="
+    echo "  =============================="
     echo ""
 
     # Show default CA
-    default_ca=$(jq -r '.defaultCA // "none"' -- "$DC_DB")
-    echoi "Default CA: $default_ca"
-    echo ""
+    if has_defaultRootCA; then
+      default_root_ca="$(get_value_from_ca_index "$(get_defaultRootCA)" "name")"
+      echoi "Default RootCA: $default_root_ca"
+    fi
+
+    if has_defaultCA; then
+      default_ca="$(get_value_from_ca_index "$(get_defaultCA)" "name")"
+      echoi "Default CA: $default_ca"
+    fi
 
     if [ "$show_ca" = "true" ] || [ "$show_keys" = "false" ]; then
+        echo ""
         echoi "Certificate Authorities:"
-        echo "  ------------------------"
         # Show root CAs
-        echoi "Root CAs:"
-        jq -r '.ssl.ca.root | to_entries[] | "  - " + .key' -- "$DC_DB" 2>/dev/null || echo "  None"
+        echoi "  Root CAs:"
+        jq -r '.ssl.rootCAs | to_entries[] | "    - " + .key' -- "$DC_DB" 2>/dev/null || echo "  None"
 
         # Show intermediate CAs
-        echoi "Intermediate CAs:"
-        jq -r '.ssl.ca.intermediate | to_entries[] | "  - " + .key' -- "$DC_DB" 2>/dev/null || echo "  None"
+        echoi "  Intermediate CAs:"
+        jq -r '.ssl.intermediateCAs | to_entries[] | "    - " + .key' -- "$DC_DB" 2>/dev/null || echo "  None"
         echo ""
     fi
 
@@ -262,9 +302,9 @@ cleanup_dcrypto_files() {
         while IFS= read -r import_file < "$tmpfile_orphaned"; do
             file_path="$(realpath "$import_file")"
             echod "Checking if import_file is orphaned: $file_path"
-            # Strip quotes from index.json paths
-            if ! jq -r '.ssl.keys | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" | sed 's/^"\(.*\)"$/\1/' | grep -Fx "$file_path" >/dev/null 2>&1 && \
-               ! jq -r '.ssl.ca | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" | sed 's/^"\(.*\)"$/\1/' | grep -Fx "$file_path" >/dev/null 2>&1; then
+            if ! jq -r '.ssl.keys | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" >/dev/null 2>&1 && \
+               ! jq -r '.ssl.rootCAs | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" >/dev/null 2>&1 && \
+               ! jq -r '.ssl.intermediateCAs | to_entries[] | .value | to_entries[] | .value' -- "$DC_DB" >/dev/null 2>&1; then
                 found_orphaned=true
                 echoi "Orphaned import_file: $file_path"
                 if [ "$cleanup_dry_run" != "true" ]; then
@@ -364,7 +404,7 @@ cleanup_dcrypto_files() {
             key_file=$(echo "$line" | cut -d' ' -f2- | sed 's/^"\(.*\)"$/\1/')
             echod "Checking key import_file: $key_file (index $index)"
             # Get CA keys from index.json
-            ca_keys=$(jq -r '.ssl.ca | to_entries[] | .value | to_entries[] | .value | select(.key == "key") | .value' -- "$DC_DB" | sed 's/^"\(.*\)"$/\1/')
+            ca_keys=$(jq -r '.ssl.rootCAs // .ssl.intermediateCAs | to_entries[] | .value | to_entries[] | .value | select(.key == "key") | .value' -- "$DC_DB" | sed 's/^"\(.*\)"$/\1/')
             # Skip if key is a CA key
             if echo "$ca_keys" | grep -Fx "$key_file" >/dev/null 2>&1; then
                 echod "Key $key_file is a CA key, skipping"
@@ -418,7 +458,7 @@ list_certificate_authorities() {
         echoi ""
         echoi "Root CAs:"
         echoi "---------"
-        jq -r '.ssl.ca.root | to_entries[] | .key + " | " + (.value.name // "Unnamed") + " | " + (.value.created // "Unknown date")' -- "$DC_DB" 2>/dev/null | \
+        jq -r '.ssl.rootCAs | to_entries[] | .key + " | " + (.value.name // "Unnamed") + " | " + (.value.created // "Unknown date")' -- "$DC_DB" 2>/dev/null | \
         while IFS='|' read -r index name created; do
             printf "  %-12s %-30s %s\n" "$index" "$name" "$created"
             if [ "$VERBOSE" -eq 1 ]; then
@@ -435,7 +475,7 @@ list_certificate_authorities() {
         echoi ""
         echoi "Intermediate CAs:"
         echoi "-----------------"
-        jq -r '.ssl.ca.intermediate | to_entries[] |
+        jq -r '.ssl.intermediateCAs | to_entries[] |
                .key + " | " + (.value.name // "Unnamed") + " |
                " + (.value.created // "Unknown date")' -- "$DC_DB" 2>/dev/null | \
         while IFS='|' read -r index name created; do
@@ -507,8 +547,8 @@ check_ssl_database() {
     for f in $files; do
         f="$(realpath "$f")"
         ca_name="$(basename "$f" | awk -F. '{print $(NF-1)}')"
-        if ! jq -e --arg idx "$ca_name" '.ssl.ca.root //
-                                        .ssl.ca.intermediate | to_entries[] |
+        if ! jq -e --arg idx "$ca_name" '.ssl.rootCAs //
+                                        .ssl.intermediateCAs | to_entries[] |
                                         select(.key == $idx)' -- "$DC_DB"; then
             echow "File is missing in database: $f"
         fi
@@ -521,7 +561,7 @@ set_permissions_and_owner() {
     if [ "$DYSTOPIAN_USER" = "root" ] && [ "$perm" -eq 440 ]; then
         perm=400
     fi
-    if ! chmod "$perm" "$1" 2>/dev/null; then
+    if ! chmod -- "$perm" "$1" 2>/dev/null; then
         echoe "Failed to set permissions $perm on $1"
         return 1
     fi
@@ -529,13 +569,14 @@ set_permissions_and_owner() {
         echoe "Failed to set owner root:${DYSTOPIAN_USER} on $1"
         return 1
     fi
-    if [ "$1" != "$DC_DB" ]; then
-        echov "Successfully set perm ($perm) and owner 'root:$DYSTOPIAN_USER' on $1"
-    else
-        echod "Successfully set perm ($perm) and owner 'root:$DYSTOPIAN_USER' on $1"
-    fi
+    echod "Successfully set perm ($perm) and owner 'root:$DYSTOPIAN_USER' on $1"
     return 0
 }
+
+mktemps() {
+  mktemp -- "$(mktemp -d -- "/tmp/XXXXXXXXXXXXXXX")/XXXXXXXXXXXXXXX"
+}
+
 
 absolutepath() {
     if which realpath >/dev/null 2>&1; then
@@ -565,6 +606,7 @@ absolutepathidx() {
     done
     echo "$dir/$base.$2.$c.$ext"
 }
+
 
 get_index_from_filename() {
     filename="${1##*/}"
@@ -614,8 +656,6 @@ get_gh_repo() {
        }
   return 0
 }
-
-
 
 
 get_index_from_gpg() {
@@ -778,34 +818,37 @@ ssl_build_cmd() {
 
 
 check_gpg_key_integrity() {
-    mkdir -p -- "$DC_FAKE_GNUPG" || {
-        echoe "Not able to create directory for key integrity check."
-        return 1
-    }
+  tmpdir=$(mktemp -d -- "/tmp/XXXXXXX")
+  pubkbx="$tmpdir/pubring.kbx"
 
-    touch -- "$DC_FAKE_GNUPG/pubring.kbx" || {
-        echoe "Not able to create pubring.kbx for key integrity check."
-        return 1
-    }
+  touch -- "$pubkbx" || {
+    echoe "Not able to create pubring.kbx for key integrity check."
+    return 1
+  }
 
     if grep -qE "BEGIN PGP (PUBLIC|PRIVATE) KEY BLOCK" -- "$1"; then
-        gpg --batch --homedir "$DC_FAKE_GNUPG" --import -- "$1"
+        gpg --batch --homedir "$tmpdir" --import -- "$1"
     elif file -- "$1" | grep -q "openssl enc"; then
         ssl_build_cmd "$2" "$1"
-        $SSL_CMD | gpg --batch --homedir "$DC_FAKE_GNUPG" --import -- "$1"
+        $SSL_CMD | gpg --batch --homedir "$tmpdir" --import -- "$1"
     else
         echoe "Key is not a GPG key"
     fi
 
     if [ "$?" -ne 0 ]; then
         echoe "Key integrity check failed"
-        rm -rf -- "$DC_FAKE_GNUPG"
+        rm -rf -- "$tmpdir"
         return 1
     fi
 
-    rm -rf -- "$DC_FAKE_GNUPG"
+    rm -rf -- "$tmpdir" || {
+      echoe "Failed removing temporary GPG home directory"
+      return 1
+    }
+
     return 0
 }
+
 
 encrypt_gpg_key() {
     salt=$(openssl rand -hex 16)
@@ -827,6 +870,7 @@ encrypt_gpg_key() {
     set_permissions_and_owner "${1}.enc" 440
     return 0
 }
+
 
 decrypt_gpg_key() {
     path="${1:+$(basename -- "$1")}"
@@ -906,7 +950,7 @@ install_package() {
 }
 
 check_dependencies_secureboot() {
-bla
+  :
 }
 
 trigger_remount_efivars() {
@@ -980,17 +1024,18 @@ detect_distro() {
     echod "Detected distribution: $distro"
 }
 
+
 check_secureboot_status() {
-    SECUREBOOT_ENABLED=$(
-        od --address-radix=n \
-           --format=u1 "$EFIVAR_PATH/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c" | \
-        awk -F' ' '{print $NF}'
-    )
-    if [ "$?" -ne 0 ]; then
-        echoe "Failed checking secureboot status"
-        return 1
-    fi
-    return 0
+  SECUREBOOT_ENABLED=$(
+    od --address-radix=n \
+       --format=u1 "$EFIVAR_PATH/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c" | \
+    awk -F' ' '{print $NF}'
+  )
+  if [ "$?" -ne 0 ]; then
+    echoe "Failed checking secureboot status"
+    return 1
+  fi
+  return 0
 }
 
 
@@ -1062,3 +1107,33 @@ preparse() {
 }
 
 
+download_and_install_latest_releases() {
+  cwd="$1"
+  tmpdir=$(mktemp -d ./XXXXXX)
+  cd -- "$tmpdir" || {
+    echoe "Failed changing directory: $tmpdir"
+    return 1
+  }
+  for pkg in "${DYSTOPIAN_PACKAGES[@]}"; do
+    url=$(curl -s "https://api.github.com/repos/dcx7c5/$pkg/releases" | jq -r '.[0].assets[0].browser_download_url') && \
+    wget -qO- "$url" | tar -xvzf - && \
+    sudo make -C "$pkg" install
+  done
+  cd -- "$cwd" || {
+    echoe "Failed changing directory: $tmpdir"
+    return 1
+  }
+  if ! rm -rf "$tmpdir"; then
+    echo "Error removing $tmpdir"
+    return 1
+  fi
+}
+
+
+cleanup_stack_gpghome() {
+  rm -rf -- "$PROJECT_DIR/.certs/.gnupg" || {
+    echoe "Failed removing"
+    return 1
+  }
+  export GNUPGHOME=$OLDGNUPGHOME
+}

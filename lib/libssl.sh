@@ -4,70 +4,69 @@
 
 
 _create_argon2id_derived_key_pw() {
-    # Check the exit status of the pipeline
-    if openssl kdf \
-        -keylen 32 \
-        -kdfopt pass:"${1:+"$([ -s "$1" ] && cat -- "$(absolutepath "$1")" || echo "$1")"}" \
-        -kdfopt salt:"${2:+"$([ -s "$2" ] && cat -- "$(absolutepath "$2")" || echo "$2")"}" \
-        -kdfopt memcost:"524288" \
-        -kdfopt early_clean:1 \
-        -kdfopt lanes:"$(nproc)" ARGON2ID 2>/dev/null | \
-        tr -d ':\n '; then
-        if [ -t 1 ]; then
-            printf "\n"
-        fi
-        return 0
-    else
-        echoe "Failed to generate Argon2id key"
-        return 1
+  # Check the exit status of the pipeline
+  if openssl kdf \
+             -keylen 32 \
+             -kdfopt pass:"${1:+"$([ -s "$1" ] && cat -- "$(absolutepath "$1")" || echo "$1")"}" \
+             -kdfopt salt:"${2:+"$([ -s "$2" ] && cat -- "$(absolutepath "$2")" || echo "$2")"}" \
+             -kdfopt memcost:"524288" \
+             -kdfopt early_clean:1 \
+             -kdfopt lanes:"$(nproc)" ARGON2ID 2>/dev/null | \
+    tr -d ':\n '; then
+    if [ -t 1 ]; then
+      printf "\n"
     fi
-
+    return 0
+  else
+    echoe "Failed to generate Argon2id key"
+    return 1
+  fi
 }
 
 _create_pbkdf2_derived_key_pw() {
-    printf "%s" "${1:+"$([ -s "$1" ] && cat -- "$(absolutepath "$1")" || echo "$1")"}"
+  printf "%s" "${1:+"$([ -s "$1" ] && cat -- "$(absolutepath "$1")" || echo "$1")"}"
 }
 
 _create_saltfile() {
-    printf "%s" "$(openssl rand -hex 32)" > "$1"
-    if [ ! -s "$1" ]; then
-        echoe "Couldn't write to file: $1"
-        return 1
-    fi
-    set_permissions_and_owner "$1" 440
+  printf "%s" "$(openssl rand -hex 32)" > "$1"
+  if [ ! -s "$1" ]; then
+    echoe "Couldn't write to file: $1"
+    return 1
+  fi
+  set_permissions_and_owner "$1" 440
 }
 
 _create_serialfile() {
-    serial="$1"
-    serial_out="$2"
-    printf "%s" "$serial" >> "$serial_out"
-    if [ ! -s "$serial_out" ]; then
-        echoe "Couldn't write to file: $serial_out"
-        return 1
-    fi
-    set_permissions_and_owner "$serial_out" 440
+  serial="$1"
+  serial_out="$2"
+  printf "%s" "$serial" >> "$serial_out"
+  if [ ! -s "$serial_out" ]; then
+    echoe "Couldn't write to file: $serial_out"
+    return 1
+  fi
+  set_permissions_and_owner "$serial_out" 440
 }
 
 # Parses domains & ips from comma separated string
 _process_domains() {
-    domains_ips="$1"
-    orig_args="$*"
-    : "${dnsc:=1}"
-    : "${ipc:=1}"
-    domains_ips=$(printf "%s" "$domains_ips" | sed 's/,/ /g')
-    domcount=$(printf "%s" "$domains_ips" | wc -w | tr -d ' ')
-    ips=""
-    dns=""
-    for domain in $domains_ips; do
-        if is_ip "$domain"; then
-            ips="${ips}\nIP.$ipc = $domain"
-            ipc=$(("$ipc" + 1))
-        else
-            dns="${dns}\nDNS.$dnsc = $domain"
-            dnsc=$(("$dnsc" + 1))
-        fi
-    done
-    set -- "$orig_args"
+  domains_ips="$1"
+  orig_args="$*"
+  : "${dnsc:=1}"
+  : "${ipc:=1}"
+  domains_ips=$(printf "%s" "$domains_ips" | sed 's/,/ /g')
+  domcount=$(printf "%s" "$domains_ips" | wc -w | tr -d ' ')
+  ips=""
+  dns=""
+  for domain in $domains_ips; do
+    if is_ip "$domain"; then
+      ips="${ips}\nIP.$ipc = $domain"
+      ipc=$(("$ipc" + 1))
+    else
+      dns="${dns}\nDNS.$dnsc = $domain"
+      dnsc=$(("$dnsc" + 1))
+    fi
+  done
+  set -- "$orig_args"
 }
 
 _create_sslconfig() {
@@ -88,23 +87,21 @@ _create_sslconfig() {
   domcount=$(printf "%s" "$domains_ips" | wc -w | tr -d ' ')
   ips=""
   dns=""
+  [ "$domains_ips" = " " ] && domains_ips=""
   for domain in $domains_ips; do
-
     if is_ip "$domain"; then
-        ips="${ips}\nIP.$ipc = $domain"
-        ipc=$(("$ipc" + 1))
+      ips="${ips}\nIP.$ipc = $domain"
+      ipc=$(("$ipc" + 1))
     else
-        dns="${dns}\nDNS.$dnsc = $domain"
-        dnsc=$(("$dnsc" + 1))
+      dns="${dns}\nDNS.$dnsc = $domain"
+      dnsc=$(("$dnsc" + 1))
     fi
   done
 
-  if [ "$cfg_type" = "server" ]; then
+  if [ "$cfg_type" = "server" ] && [ -n "$domains_ips" ]; then
     common_name="${domains_ips%% *}"
-  elif [ "$cfg_type" = "client" ]; then
-    if [ -z "$common_name" ]; then
-        common_name="$domains_ips"
-    fi
+  elif [ "$cfg_type" = "client" ] && [ -z "$common_name" ]; then
+    common_name="$domains_ips"
   fi
 
   (
@@ -135,957 +132,990 @@ distinguished_name = req_distinguished_name
 EOF
 )
     if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
-        ssl_cfg="${ssl_cfg}\nx509_extensions = v3_ca\n\n"
+      ssl_cfg="${ssl_cfg}\nx509_extensions = v3_ca\n\n"
     elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
-        ssl_cfg="${ssl_cfg}\nreq_extensions = req_ext\n\n"
+      ssl_cfg="${ssl_cfg}\nreq_extensions = req_ext\n\n"
     fi
     ssl_cfg="${ssl_cfg}[ req_distinguished_name ]\n"
 
     if [ -n "$country" ]; then
-        ssl_cfg="${ssl_cfg}C = ${country}\n"
+      ssl_cfg="${ssl_cfg}C = ${country}\n"
     fi
     if [ -n "$state" ]; then
-        ssl_cfg="${ssl_cfg}ST = ${state}\n"
+      ssl_cfg="${ssl_cfg}ST = ${state}\n"
     fi
     if [ -n "$locality" ]; then
-        ssl_cfg="${ssl_cfg}L = ${locality}\n"
+      ssl_cfg="${ssl_cfg}L = ${locality}\n"
     fi
     if [ -n "$organization" ]; then
-        ssl_cfg="${ssl_cfg}O = ${organization}\n"
+      ssl_cfg="${ssl_cfg}O = ${organization}\n"
     fi
     if [ "$cfg_type" = "root" ]; then
-        if [ -z "$orgunit" ]; then
-            ssl_cfg="${ssl_cfg}OU = Certificate Authority\n"
-        else
-            ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
-        fi
-        if [ -z "$common_name" ]; then
-            ssl_cfg="${ssl_cfg}CN = $common_name CA\n"
-        else
-            ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
-        fi
+      if [ -z "$orgunit" ]; then
+        ssl_cfg="${ssl_cfg}OU = Certificate Authority\n"
+      else
+        ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
+      fi
+      if [ -z "$common_name" ]; then
+        ssl_cfg="${ssl_cfg}CN = $common_name CA\n"
+      else
+        ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
+      fi
 
     elif [ "$cfg_type" = "intermediate" ]; then
-        if [ -z "$orgunit" ]; then
-            ssl_cfg="${ssl_cfg}OU = Intermediate Certificate Authority\n"
-        else
-            ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
-        fi
-        if [ -z "$common_name" ]; then
-            ssl_cfg="${ssl_cfg}CN = $common_name Intermediate CA\n"
-        else
-            ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
-        fi
+      if [ -z "$orgunit" ]; then
+        ssl_cfg="${ssl_cfg}OU = Intermediate Certificate Authority\n"
+      else
+        ssl_cfg="${ssl_cfg}OU = ${orgunit}\n"
+      fi
+      if [ -z "$common_name" ]; then
+        ssl_cfg="${ssl_cfg}CN = $common_name Intermediate CA\n"
+      else
+        ssl_cfg="${ssl_cfg}CN = ${common_name}\n"
+      fi
     elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
-        ssl_cfg="${ssl_cfg}CN = $common_name\n"
+      ssl_cfg="${ssl_cfg}CN = $common_name\n"
     fi
     if [ -n "$email" ]; then
-        ssl_cfg="${ssl_cfg}emailAddress = $email\n"
+      ssl_cfg="${ssl_cfg}emailAddress = $email\n"
     fi
     ssl_cfg="${ssl_cfg}\n"
     if [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
-        ssl_cfg="${ssl_cfg}[ req_ext ]\n"
-        ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
-        ssl_cfg="${ssl_cfg}basicConstraints = CA:FALSE\n"
-        if [ "$cfg_type" = "server" ]; then
-            ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, keyEncipherment\n"
-            ssl_cfg="${ssl_cfg}extendedKeyUsage = serverAuth\n"
-        elif [ "$cfg_type" = "client" ]; then
-            ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature\n"
-            ssl_cfg="${ssl_cfg}extendedKeyUsage = clientAuth\n"
-        fi
+      ssl_cfg="${ssl_cfg}[ req_ext ]\n"
+      ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
+      ssl_cfg="${ssl_cfg}basicConstraints = CA:FALSE\n"
+      if [ "$cfg_type" = "server" ]; then
+        ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, keyEncipherment\n"
+        ssl_cfg="${ssl_cfg}extendedKeyUsage = serverAuth\n"
+      elif [ "$cfg_type" = "client" ]; then
+        ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature\n"
+        ssl_cfg="${ssl_cfg}extendedKeyUsage = clientAuth\n"
+      fi
     fi
 
     if [ "$domcount" -gt 1 ]; then
-        ssl_cfg="${ssl_cfg}subjectAltName = @alt_names\n\n"
-        ssl_cfg="${ssl_cfg}[ alt_names ]$ips$dns\n"
+      ssl_cfg="${ssl_cfg}subjectAltName = @alt_names\n\n"
+      ssl_cfg="${ssl_cfg}[ alt_names ]$ips$dns\n"
     fi
     if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
-        ssl_cfg="${ssl_cfg}[ v3_ca ]\n"
-        ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
-        ssl_cfg="${ssl_cfg}authorityKeyIdentifier = keyid:always,issuer\n"
-        if [ "$cfg_type" = "intermediate" ]; then
-            ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE, pathlen:0\n"
-        elif [ "$cfg_type" = "root" ]; then
-            ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE\n"
-        fi
-        ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, cRLSign, keyCertSign\n"
+      ssl_cfg="${ssl_cfg}[ v3_ca ]\n"
+      ssl_cfg="${ssl_cfg}subjectKeyIdentifier = hash\n"
+      ssl_cfg="${ssl_cfg}authorityKeyIdentifier = keyid:always,issuer\n"
+      if [ "$cfg_type" = "intermediate" ]; then
+        ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE, pathlen:0\n"
+      elif [ "$cfg_type" = "root" ]; then
+        ssl_cfg="${ssl_cfg}basicConstraints = critical, CA:TRUE\n"
+      fi
+      ssl_cfg="${ssl_cfg}keyUsage = critical, digitalSignature, cRLSign, keyCertSign\n"
     fi
     if [ -n "$crldistpoints" ]; then
-        ssl_cfg="${ssl_cfg}\n\ncrlDistributionPoints = URI:$crldistpoints"
+      ssl_cfg="${ssl_cfg}\n\ncrlDistributionPoints = URI:$crldistpoints"
     fi
     ssl_cfg="${ssl_cfg}\n"
     printf "%b" "$ssl_cfg" > "$config_out"
     if [ ! -s "$config_out" ]; then
-        echoe "Config file $config_out was not created"
-    return 1
-  fi
+      echoe "Failed creating config file: $config_out"
+      return 1
+    fi
   )
   status=$?
   echod "Subshell for ssl_config creation ended with status: $status"
-  if [ "$status" -eq 0 ];then
-      set_permissions_and_owner "$config_out" 440
-      echod "SSL config contents:"
-      echod "$(cat "$config_out" 2>/dev/null || echo "Failed to read $config_out")"
+  [ "$status" -ne 0 ] && return 1
+  set_permissions_and_owner "$config_out" 440
+  return 0
+}
+
+
+_get_issuer_cert_index() {
+  cert_file="$1"
+
+  # Check if server certificate exists
+  if [ ! -s "$cert_file" ]; then
+    echoe "Error: Server certificate file is missing or empty"
+    return 1
+  fi
+
+  # Get the issuer of the server certificate
+  issuer_cn="$(openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | sed -n 's/.*CN[ =]\+\([^/]*\).*/\1/p')"
+  echo "$issuer_cn" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]"
+  return 0
+}
+
+
+_create_and_verify_key() {
+  key_out="$1"
+  password="$2"
+  salt_out="$3"
+  no_argon="$4"
+  passphrasedbg=$({ [ "${2}" = "gui" ] || [ "${2}" = "GUI" ]; } && echo "[GUI]")
+  passphrasedbg=$({ [ -n "${2}" ]  && [ ! -f "${2}" ]; } && echo "[SET]" || echo "${2}")
+
+  echod "Starting _create_and_verify_key with parameters:"
+  echod "    key_out: $key_out"
+  echod "   password: $passphrasedbg"
+  echod "   salt_out: $salt_out"
+  echod "   no_argon: $no_argon"
+
+  (
+    if [ -z "$password" ]; then
+      echoi "Generating unencrypted secp384r1 private key..."
+
+      # Generate key
+      echod "Calling openssl ecparam -genkey -name secp384r1 -out $key_out -outform PEM"
+      if ! openssl ecparam \
+                   -genkey \
+                   -name secp384r1 \
+                   -out "$key_out" \
+                   -outform PEM 2>/dev/null; then
+        echoe "Failed to generate private key"
+        return 1
+      fi
+      echosv "Private key generation successful"
+      echov "Validating generated private key..."
+
+      # Verify key
+      echod "Calling openssl ec -check -noout -in $key_out"
+      if ! openssl ec -check -noout -in "$key_out" >/dev/null 2>&1; then
+        echoe "Failed to validate private key: key check failed"
+        return 1
+      fi
+      echosv "Private key validation successful"
+    else
+      echoi "Generating encrypted secp384r1 private key..."
+      if [ "$no_argon" = "true" ]; then
+        echov "Encrypting with PBKDF2 key..."
+
+        # Generate key
+        echov "Calling _create_pbkdf2_derived_key_pw $password | openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -aes-256-cbc -pass stdin -out $key_out"
+        if ! _create_pbkdf2_derived_key_pw "$password" | \
+          openssl genpkey \
+                  -algorithm EC \
+                  -pkeyopt ec_paramgen_curve:secp384r1 \
+                  -aes-256-cbc \
+                  -pass stdin \
+                  -out "$key_out" 2>/dev/null; then
+            echoe "Failed to generate encrypted private key with PBKDF2"
+            return 1
+        fi
+        echosv "Encrypted private key generated with PBKDF2"
+
+        # Verify key
+        echov "Validating generated private key..."
+        echod "Calling _create_pbkdf2_derived_key_pw $password | openssl ec -check -passin stdin -in $key_out"
+        if ! _create_pbkdf2_derived_key_pw "$password" | \
+            openssl ec -check -passin stdin -in "$key_out" >/dev/null 2>&1; then
+            echoe "Failed to validate encrypted private key: decryption or key check failed"
+            return 1
+        fi
+        echosv "Private key validation successful"
+
+      else
+        echov "Encrypting with Argon2id-derived key..."
+
+        # Generate Key
+        echod "Calling _create_argon2id_derived_key_pw $password $salt_out | openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -aes-256-cbc -pass stdin -out $key_out"
+        if ! _create_argon2id_derived_key_pw "$password" "$salt_out" | \
+          openssl genpkey \
+                  -algorithm EC \
+                  -pkeyopt ec_paramgen_curve:secp384r1 \
+                  -aes-256-cbc \
+                  -pass stdin \
+                  -out "$key_out" 2>/dev/null; then
+          echoe "Failed to generate encrypted private key with Argon2id"
+          return 1
+        fi
+        echosv "Encrypted private key generated with Argon2id"
+        echov "Validating generated private key..."
+        echod "Calling _create_argon2id_derived_key_pw $password $salt_out | openssl ec -in $key_out -passin stdin -noout -check"
+        if ! _create_argon2id_derived_key_pw "$password" "$salt_out" | \
+          openssl ec -in "$key_out" -check -noout -passin stdin >/dev/null 2>&1; then
+          echoe "'$key_out' is not a valid private key"
+          return 1
+        fi
+        echosv "Private key validation successful"
+      fi
+    fi
+  )
+  status=$?
+  echod "Private key creation subshell exited with status: $status"
+  if [ "$status" -eq 0 ]; then
+    set_permissions_and_owner "$key_out" 440
+    return 0
+  else
+    return 1
+  fi
+}
+
+
+_create_and_verify_csr() {
+  csr_out="$1"
+  key_file="$2"
+  password="$3"
+  salt="$4"
+  config_file="$5"
+  passphrasedbg=$({ [ "${3}" = "gui" ] || [ "${3}" = "GUI" ]; } && echo "[GUI]")
+  passphrasedbg=$({ [ -n "${3}" ]  && [ ! -f "${3}" ]; } && echo "[SET]" || echo "${3}")
+  saltdbg=$({ [ -n "${4}" ]  && [ ! -f "${4}" ]; } && echo "[SET]" || echo "${4}")
+
+  echod "Starting _create_and_verify_csr with parameters:"
+  echod "     csr_out: $csr_out"
+  echod "    key_file: $key_file"
+  echod "    password: $passphrasedbg"
+  echod "        salt: $saltdbg"
+  echod " config_file: $config_file"
+
+  (
+    # Handle password and salt
+    if [ -n "$password" ]; then
+      if [ -n "$salt" ]; then
+        echov "Using Argon2id derived key for CSR generation"
+        echod "Calling _create_argon2id_derived_key_pw [pass] [salt] | openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
+        if ! _create_argon2id_derived_key_pw "$password" "$salt" | \
+        openssl req \
+                -new \
+                -key "$key_file" \
+                -out "$csr_out" \
+                -config "$config_file" \
+                -passin stdin 2>/dev/null; then
+          echoe "Failed to generate CSR with Argon2id"
+          return 1
+        fi
+        echosv "CSR generated successfully with Argon2id"
+      else
+        echov "Using PBKDF2 derived key for CSR generation"
+        echod "Calling _create_pbkdf2_derived_key_pw [password] | openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
+        if ! _create_pbkdf2_derived_key_pw "$password" | \
+        openssl req \
+                -new \
+                -key "$key_file" \
+                -out "$csr_out" \
+                -config "$config_file" \
+                -passin stdin 2>/dev/null; then
+          echoe "Failed to generate CSR with PBKDF2"
+          return 1
+        fi
+        echosv "CSR generated successfully with PBKDF2"
+      fi
+    else
+      echov "No password provided, generating CSR without password"
+      echod "Calling openssl req -new -key $key_file -out $csr_out -config $config_file"
+      if ! openssl req \
+                   -new \
+                   -key "$key_file" \
+                   -out "$csr_out" \
+                   -config "$config_file" 2>/dev/null; then
+        echoe "Failed to generate CSR"
+        return 1
+      fi
+      echov "CSR generated successfully without password"
+    fi
+
+    # Verify CSR
+    echov "Verifying CSR content & signature ..."
+    echod "Calling openssl req -in $csr_out -noout -verify"
+    if ! openssl req -in "$csr_out" -noout -verify >/dev/null 2>&1; then
+      echoe "CSR signature verification failed"
+      return 1
+    fi
+
+    echod "Calling openssl req -in $csr_out -noout -text"
+    if ! openssl req -in "$csr_out" -noout -text >/dev/null 2>&1; then
+      echoe "CSR content verification failed"
+      return 1
+    fi
+    echosv "CSR verification successful"
+  )
+  status=$?
+  echod "CSR creation subshell exited with status: $status"
+  if [ "$status" -eq 0 ]; then
+      set_permissions_and_owner "$csr_out" 440
       return 0
   fi
   return 1
 }
 
 
-_get_parent_cert_index() {
-    cert_file="$1"
-
-    # Check if server certificate exists
-    if [ ! -s "$cert_file" ]; then
-        echoe "Error: Server certificate file is missing or empty"
-        return 1
-    fi
-
-    # Get the issuer of the server certificate
-    issuer_cn="$(openssl x509 -in "$cert_file" -noout -issuer | sed -n 's/.*CN[ =]\+\([^/]*\).*/\1/p')"
-    echo "$issuer_cn" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]"
-    return 0
-}
-
-
-_create_and_verify_key() {
-    key_out="$1"
-    password="$2"
-    salt_out="$3"
-    no_argon="$4"
-    passphrasedbg=$({ [ "${2}" = "gui" ] || [ "${2}" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "${2}" ]  && [ ! -f "${2}" ]; } && echo "[SET]" || echo "${2}")
-
-    echod "Starting _create_and_verify_key with parameters:"
-    echod "    key_out: $key_out"
-    echod "   password: $passphrasedbg"
-    echod "   salt_out: $salt_out"
-    echod "   no_argon: $no_argon"
-
-    (
-        if [ -z "$password" ]; then
-            echoi "Generating unencrypted secp384r1 private key..."
-
-            # Generate key
-            echod "Calling openssl ecparam -genkey -name secp384r1 -out $key_out -outform PEM"
-            if ! openssl ecparam \
-                -genkey \
-                -name secp384r1 \
-                -out "$key_out" \
-                -outform PEM 2>/dev/null; then
-                    echoe "Failed to generate private key"
-                    return 1
-            fi
-            echosv "Private key generation successful"
-            echov "Validating generated private key..."
-
-            # Verify key
-            echod "Calling openssl ec -check -noout -in $key_out"
-            if ! openssl ec -check -noout -in "$key_out" >/dev/null 2>&1; then
-                    echoe "Failed to validate private key: key check failed"
-                    return 1
-            fi
-            echosv "Private key validation successful"
-        else
-            echoi "Generating encrypted secp384r1 private key..."
-            if [ "$no_argon" = "true" ]; then
-                echov "Encrypting with PBKDF2 key..."
-
-                # Generate key
-                echov "Calling _create_pbkdf2_derived_key_pw $password | openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -aes-256-cbc -pass stdin -out $key_out"
-                if ! _create_pbkdf2_derived_key_pw "$password" | \
-                    openssl genpkey \
-                    -algorithm EC \
-                    -pkeyopt ec_paramgen_curve:secp384r1 \
-                    -aes-256-cbc \
-                    -pass stdin \
-                    -out "$key_out" 2>/dev/null; then
-                        echoe "Failed to generate encrypted private key with PBKDF2"
-                        return 1
-                fi
-                echosv "Encrypted private key generated with PBKDF2"
-
-                # Verify key
-                echov "Validating generated private key..."
-                echod "Calling _create_pbkdf2_derived_key_pw $password | openssl ec -check -passin stdin -in $key_out"
-                if ! _create_pbkdf2_derived_key_pw "$password" | \
-                    openssl ec -check -passin stdin -in "$key_out" >/dev/null 2>&1; then
-                    echoe "Failed to validate encrypted private key: decryption or key check failed"
-                    return 1
-                fi
-                echosv "Private key validation successful"
-
-            else
-                echov "Encrypting with Argon2id-derived key..."
-
-                # Generate Key
-                echod "Calling _create_argon2id_derived_key_pw $password $salt_out | openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -aes-256-cbc -pass stdin -out $key_out"
-                if ! _create_argon2id_derived_key_pw "$password" "$salt_out" | \
-                    openssl genpkey \
-                    -algorithm EC \
-                    -pkeyopt ec_paramgen_curve:secp384r1 \
-                    -aes-256-cbc \
-                    -pass stdin \
-                    -out "$key_out" 2>/dev/null; then
-                    echoe "Failed to generate encrypted private key with Argon2id"
-
-                    return 1
-                fi
-                echosv "Encrypted private key generated with Argon2id"
-                echov "Validating generated private key..."
-                echod "Calling _create_argon2id_derived_key_pw $password $salt_out | openssl ec -in $key_out -passin stdin -noout -check"
-                if ! _create_argon2id_derived_key_pw "$password" "$salt_out" | \
-                    openssl ec -in "$key_out" -check -noout -passin stdin >/dev/null 2>&1; then
-                    echoe "'$key_out' is not a valid private key"
-                    return 1
-                fi
-                echosv "Private key validation successful"
-            fi
-        fi
-    )
-    status=$?
-    echod "Private key creation subshell exited with status: $status"
-    if [ "$status" -eq 0 ]; then
-        set_permissions_and_owner "$key_out" 440
-        return 0
-    else
-        return 1
-    fi
-}
-
-_create_and_verify_csr() {
-    csr_out="$1"
-    key_file="$2"
-    password="$3"
-    salt="$4"
-    config_file="$5"
-    passphrasedbg=$({ [ "${3}" = "gui" ] || [ "${3}" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "${3}" ]  && [ ! -f "${3}" ]; } && echo "[SET]" || echo "${3}")
-    saltdbg=$({ [ -n "${4}" ]  && [ ! -f "${4}" ]; } && echo "[SET]" || echo "${4}")
-
-    echod "Starting _create_and_verify_csr with parameters:"
-    echod "     csr_out: $csr_out"
-    echod "    key_file: $key_file"
-    echod "    password: $passphrasedbg"
-    echod "        salt: $saltdbg"
-    echod " config_file: $config_file"
-
-    (
-        # Handle password and salt
-        if [ -n "$password" ]; then
-            if [ -n "$salt" ]; then
-                echov "Using Argon2id derived key for CSR generation"
-                echod "Calling _create_argon2id_derived_key_pw [pass] [salt] | openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
-                if ! _create_argon2id_derived_key_pw "$password" "$salt" | \
-                openssl req \
-                    -new \
-                    -key "$key_file" \
-                    -out "$csr_out" \
-                    -config "$config_file" \
-                    -passin stdin 2>/dev/null; then
-                    echoe "Failed to generate CSR with Argon2id"
-                    return 1
-                fi
-                echosv "CSR generated successfully with Argon2id"
-            else
-                echov "Using PBKDF2 derived key for CSR generation"
-                echod "Calling _create_pbkdf2_derived_key_pw [password] | openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
-                if ! _create_pbkdf2_derived_key_pw "$password" | \
-                openssl req \
-                    -new \
-                    -key "$key_file" \
-                    -out "$csr_out" \
-                    -config "$config_file" \
-                    -passin stdin 2>/dev/null; then
-                    echoe "Failed to generate CSR with PBKDF2"
-                    return 1
-                fi
-                echosv "CSR generated successfully with PBKDF2"
-            fi
-        else
-            echov "No password provided, generating CSR without password"
-            echod "Calling openssl req -new -key $key_file -out $csr_out -config $config_file"
-            if ! openssl req \
-                -new \
-                -key "$key_file" \
-                -out "$csr_out" \
-                -config "$config_file" 2>/dev/null; then
-                echoe "Failed to generate CSR"
-                return 1
-            fi
-            echov "CSR generated successfully without password"
-        fi
-
-        # Verify CSR
-        echov "Verifying CSR content & signature ..."
-        echod "Calling openssl req -in $csr_out -noout -verify"
-        if ! openssl req -in "$csr_out" -noout -verify >/dev/null 2>&1; then
-            echoe "CSR signature verification failed"
-            return 1
-        fi
-
-        echod "Calling openssl req -in $csr_out -noout -text"
-        if ! openssl req -in "$csr_out" -noout -text >/dev/null 2>&1; then
-            echoe "CSR content verification failed"
-            return 1
-        fi
-        echosv "CSR verification successful"
-    )
-    status=$?
-    echod "CSR creation subshell exited with status: $status"
-    if [ "$status" -eq 0 ]; then
-        set_permissions_and_owner "$csr_out" 440
-        return 0
-    fi
-    return 1
-}
-
-
 _create_and_verify_cert() {
-    cert_out="$1"
-    csr_file="$2"
-    config_file="$3"
-    ca_key_file="$4"
-    ca_cert_file="$5"
-    pass="$6"
-    salt="$7"
-    extensions="$8"
-    days="$9"
-    passdbg=$({ [ "${6}" = "gui" ] || [ "${6}" = "GUI" ]; } && echo "[GUI]")
-    passdbg=$({ [ -n "${6}" ]  && [ ! -f "${6}" ]; } && echo "[SET]" || echo "${6}")
-    saltdbg=$({ [ -n "${7}" ]  && [ ! -f "${7}" ]; } && echo "[SET]" || echo "${7}")
+  cert_out="$1"
+  csr_file="$2"
+  config_file="$3"
+  ca_key_file="$4"
+  ca_cert_file="$5"
+  pass="$6"
+  salt="$7"
+  extensions="$8"
+  days="$9"
+  ca_index="${10:-$(find_ca_index_by_key_value "cert" "$ca_cert_file")}"
+  _ca_name="${11:-$(get_value_from_ca_index "$ca_index" "name")}"
+  ca_fullchain="${12:-$(get_value_from_ca_index "$ca_index" "fullchain")}"
 
-    echod "Starting _create_and_verify_cert with parameters:"
-    echod "      cert_out: $cert_out"
-    echod "      csr_file: $csr_file"
-    echod "   config_file: $config_file"
-    echod "   ca_key_file: $ca_key_file"
-    echod "  ca_cert_file: $ca_cert_file"
-    echod "          pass: $passdbg"
-    echod "          salt: $saltdbg"
-    echod "    extensions: $extensions"
-    echod "          days: $days"
+  passdbg=$({ [ "${6}" = "gui" ] || [ "${6}" = "GUI" ]; } && echo "[GUI]")
+  passdbg=$({ [ -n "${6}" ]  && [ ! -f "${6}" ]; } && echo "[SET]" || echo "${6}")
+  saltdbg=$({ [ -n "${7}" ]  && [ ! -f "${7}" ]; } && echo "[SET]" || echo "${7}")
 
-    (
-        # Handle CA password and salt
-        if [ -n "$pass" ]; then
-            if [ -f "$salt" ]; then
-                echov "Using Argon2id derived key for signing"
-                echod "_create_argon2id_derived_key_pw \"$passdbg\" \"$saltdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file -passin stdin"
-                if ! _create_argon2id_derived_key_pw "$pass" "$salt" | \
-                    openssl x509 \
-                    -req \
-                    -in "$csr_file" \
-                    -CA "$ca_cert_file" \
-                    -CAkey "$ca_key_file" \
-                    -CAcreateserial \
-                    -out "$cert_out" \
-                    -days "$days" \
-                    -sha384 \
-                    -extensions "$extensions" \
-                    -extfile "$config_file" \
-                    -passin stdin 2>/dev/null; then
-                        echoe "Failed to sign CSR with Argon2id"
-                        return 1
-                fi
-                echosv "CSR signed successfully with Argon2id"
-            else
-                echov "No salt file found, using password directly"
-                echod "_create_pbkdf2_derived_key_pw \"$passdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file -passin stdin"
-                if ! _create_pbkdf2_derived_key_pw "$pass" | \
-                    openssl x509 \
-                    -req \
-                    -in "$csr_file" \
-                    -CA "$ca_cert_file" \
-                    -CAkey "$ca_key_file" \
-                    -CAcreateserial \
-                    -out "$cert_out" \
-                    -days "$days" \
-                    -sha384 \
-                    -extensions "$extensions" \
-                    -extfile "$config_file" \
-                    -passin stdin 2>/dev/null; then
-                        echoe "Failed to sign CSR with PBKDF2"
-                        return 1
-                fi
-                echosv "CSR signed successfully with PBKDF2"
-            fi
-        else
-            echov "No password provided, signing with unencrypted CA private key"
-            echod "Calling openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file"
-            if ! openssl x509 \
-                -req \
-                -in "$csr_file" \
-                -CA "$ca_cert_file" \
-                -CAkey "$ca_key_file" \
-                -CAcreateserial \
-                -out "$cert_out" \
-                -days "$days" \
-                -sha384 \
-                -extensions "$extensions" \
-                -extfile "$config_file" 2>/dev/null; then
-                    echoe "Failed to sign CSR"
-                    return 1
-            fi
-            echosv "CSR signed successfully without password"
-        fi
+  echod "Starting _create_and_verify_cert with parameters:"
+  echod "      cert_out: $cert_out"
+  echod "      csr_file: $csr_file"
+  echod "   config_file: $config_file"
+  echod "      ca_index: $ca_index"
+  echod "   ca_key_file: $ca_key_file"
+  echod "  ca_cert_file: $ca_cert_file"
+  echod "  ca_fullchain: $ca_fullchain"
+  echod "          pass: $passdbg"
+  echod "          salt: $saltdbg"
+  echod "    extensions: $extensions"
+  echod "          days: $days"
 
-        # Verify certificate
-        echov "Verifying certificate signature"
-
-        echod "Calling openssl x509 -in $cert_out -noout -text"
-        if ! openssl x509 -in "$cert_out" -noout -text >/dev/null 2>&1; then
-            echoe "Certificate verification failed"
+  (
+    # Handle CA password and salt
+    if [ -n "$pass" ]; then
+      if [ -f "$salt" ]; then
+        echov "Using Argon2id derived key for signing"
+        echod "_create_argon2id_derived_key_pw \"$passdbg\" \"$saltdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file -passin stdin"
+        if ! _create_argon2id_derived_key_pw "$pass" "$salt" | \
+          openssl x509 \
+                  -req \
+                  -in "$csr_file" \
+                  -CA "$ca_cert_file" \
+                  -CAkey "$ca_key_file" \
+                  -CAcreateserial \
+                  -out "$cert_out" \
+                  -days "$days" \
+                  -sha384 \
+                  -extensions "$extensions" \
+                  -extfile "$config_file" \
+                  -passin stdin 2>/dev/null; then
+            echoe "Failed to sign CSR with Argon2id"
             return 1
         fi
-
-        echod "Calling openssl verify -CAfile $ca_cert_file $cert_out"
-        if ! openssl verify -CAfile "$ca_cert_file" "$cert_out" >/dev/null 2>&1; then
-            echoe "Certificate chain verification failed"
+      else
+        echov "No salt file found, using password directly"
+        echod "_create_pbkdf2_derived_key_pw \"$passdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file -passin stdin"
+        if ! _create_pbkdf2_derived_key_pw "$pass" | \
+          openssl x509 \
+                  -req \
+                  -in "$csr_file" \
+                  -CA "$ca_cert_file" \
+                  -CAkey "$ca_key_file" \
+                  -CAcreateserial \
+                  -out "$cert_out" \
+                  -days "$days" \
+                  -sha384 \
+                  -extensions "$extensions" \
+                  -extfile "$config_file" \
+                  -passin stdin 2>/dev/null; then
+            echoe "Failed to sign CSR with PBKDF2"
             return 1
         fi
-
-        echosv "Certificate verification successful"
-    )
-    status=$?
-    echod "CSR signing / certificate creation subshell exited with status: $status"
-    if [ "$status" -eq 0 ]; then
-        set_permissions_and_owner "$cert_out" 444
-        return 0
+      fi
+    else
+      echov "No password provided, signing with unencrypted CA private key"
+      echod "Calling openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file"
+      if ! openssl x509 \
+                   -req \
+                   -in "$csr_file" \
+                   -CA "$ca_cert_file" \
+                   -CAkey "$ca_key_file" \
+                   -CAcreateserial \
+                   -out "$cert_out" \
+                   -days "$days" \
+                   -sha384 \
+                   -extensions "$extensions" \
+                   -extfile "$config_file" 2>/dev/null; then
+        echoe "Failed to sign CSR"
+        return 1
+      fi
     fi
+    echosv "CSR signed successfully by $ca_index: $_ca_name"
+
+    # Verify certificate
+    echov "Verifying certificate signature"
+
+    echod "Calling openssl x509 -in $cert_out -noout -text"
+    if ! openssl x509 -in "$cert_out" -noout -text >/dev/null 2>&1; then
+      echoe "Certificate verification failed"
+      return 1
+    fi
+
+    [ -n "$ca_fullchain" ] && ca_cert_file="$ca_fullchain"
+
+    echod "Calling openssl verify -CAfile $ca_cert_file $cert_out"
+    if ! openssl verify -CAfile "$ca_cert_file" "$cert_out" >/dev/null 2>&1; then
+      echoe "Certificate chain verification failed"
+      return 1
+    fi
+
+    echosv "Certificate verification successful"
+  )
+  status=$?
+  echod "CSR signing / certificate creation subshell exited with status: $status"
+  if [ "$status" -ne 0 ]; then
     return 1
+  fi
+  set_permissions_and_owner "$cert_out" 444
+  return 0
 }
 
 
 _create_and_verify_sscert() {
-    ca_key_out="$1"
-    ca_cert_out="$2"
-    pass="$3"
-    salt="$4"
-    ca_conf_out="$5"
-    no_argon="$6"
-    days="$7"
-    passdbg=$({ [ "${3}" = "gui" ] || [ "${3}" = "GUI" ]; } && echo "[GUI]")
-    passdbg=$({ [ -n "${3}" ]  && [ ! -f "${3}" ]; } && echo "[SET]" || echo "${3}")
-    saltdbg=$({ [ -n "${4}" ]  && [ ! -f "${4}" ]; } && echo "[SET]" || echo "${4}")
+  ca_key_out="$1"
+  ca_cert_out="$2"
+  pass="$3"
+  salt="$4"
+  ca_conf_out="$5"
+  no_argon="$6"
+  days="$7"
+  passdbg=$({ [ "${3}" = "gui" ] || [ "${3}" = "GUI" ]; } && echo "[GUI]")
+  passdbg=$({ [ -n "${3}" ]  && [ ! -f "${3}" ]; } && echo "[SET]" || echo "${3}")
+  saltdbg=$({ [ -n "${4}" ]  && [ ! -f "${4}" ]; } && echo "[SET]" || echo "${4}")
 
-    echod "Starting _create_and_verify_sscert with parameters:"
-    echod "   ca_key_out: $ca_key_out"
-    echod "  ca_cert_out: $ca_cert_out"
-    echod "         pass: $passdbg"
-    echod "         salt: $saltdbg"
-    echod "  ca_conf_out: $ca_conf_out"
-    echod "     no_argon: $no_argon"
-    echod "         days: $days"
-    echod "         user: $DYSTOPIAN_USER"
+  echod "Starting _create_and_verify_sscert with parameters:"
+  echod "   ca_key_out: $ca_key_out"
+  echod "  ca_cert_out: $ca_cert_out"
+  echod "         pass: $passdbg"
+  echod "         salt: $saltdbg"
+  echod "  ca_conf_out: $ca_conf_out"
+  echod "     no_argon: $no_argon"
+  echod "         days: $days"
+  echod "         user: $DYSTOPIAN_USER"
 
-    (
-        # Log the OpenSSL command
+  (
+    # Log the OpenSSL command
 
-        if [ -z "$pass" ]; then
-            echoi "Generating self-signed certificate without password"
-            echod "Running OpenSSL command: openssl req -x509 -new -noenc -keyout $ca_key_out -out $ca_cert_out -days $days -sha384 -extensions v3_ca -config $ca_conf_out"
-            if ! openssl req \
-                  -x509 \
-                  -new \
-                  -keyout "$ca_key_out" \
-                  -out "$ca_cert_out" \
-                  -days "$days" \
-                  -noenc \
-                  -sha384 \
-                  -keyform PEM \
-                  -extensions v3_ca \
-                  -config "$ca_conf_out" 2>/dev/null; then
-                echoe "Failed to generate self-signed certificate"
-                return 1
-            fi
-        elif [ -n "$pass" ] && [ "$no_argon" = "false" ]; then
-            echoi "Generating self-signed certificate with password using Argon2id KDF"
-            echod "Running OpenSSL command: openssl req -x509 -new -keyout $ca_key_out -out $ca_cert_out -days $days -sha384 -extensions v3_ca -config $ca_conf_out"
-            if ! _create_argon2id_derived_key_pw "$pass" "$salt" | \
-            openssl req \
-                  -x509 \
-                  -new \
-                  -keyout "$ca_key_out" \
-                  -out "$ca_cert_out" \
-                  -passout stdin \
-                  -days "$days" \
-                  -sha384 \
-                  -extensions v3_ca \
-                  -config "$ca_conf_out" 2>/dev/null; then
-                echoe "Failed to generate self-signed certificate"
-                return 1
-            fi
-        elif [ -n "$pass" ] && [ "$no_argon" = "true" ]; then
-            echoi "Generating self-signed certificate with password using PBKDF2 KDF"
-            echod "Running OpenSSL command: openssl req -x509 -new -keyout $ca_key_out -out $ca_cert_out -days $days -sha384 -extensions v3_ca -config $ca_conf_out"
-            if ! _create_pbkdf2_derived_key_pw "$ca_pass" | \
-            openssl req \
-                  -x509 \
-                  -new \
-                  -keyout "$ca_key_out" \
-                  -out "$ca_cert_out" \
-                  -days "$days" \
-                  -passout stdin \
-                  -sha384 \
-                  -extensions v3_ca \
-                  -config "$ca_conf_out" 2>/dev/null; then
-                echoe "Failed to generate self-signed certificate"
-                return 1
-            fi
-        fi
-
-        # Check if certificate was created
-        if [ ! -f "$ca_cert_out" ]; then
-            echoe "Certificate file $ca_cert_out was not created"
-            return 1
-        fi
-
-        # Verify certificate
-        echov "Verifying generated self-signed certificate..."
-
-        echod "Calling: openssl x509 -in $ca_cert_out -noout -text"
-        if ! openssl x509 -in "$ca_cert_out" -noout -text >/dev/null 2>&1; then
-            echoe "Self-signed certificate verification failed"
-            return 1
-        fi
-        echov "Self-signed certificate verification successful"
-
-        echod "Calling: openssl verify -CAfile $ca_cert_out $ca_cert_out"
-        if ! openssl verify -CAfile "$ca_cert_out" "$ca_cert_out" >/dev/null 2>&1; then
-            echoe "Self-signed certificate chain verification failed"
-            return 1
-        fi
-        echov "Self-signed certificate chain verification successful"
-    )
-    status=$?
-    echod "Self-signed certificate subshell exited with status: $status"
-    if [ "$status" -eq 0 ]; then
-        if set_permissions_and_owner "$ca_key_out" 440 && \
-           set_permissions_and_owner "$ca_cert_out" 444 ; then
-            echosv "Creating self-signed certificate successful"
-            return 0
-        fi
-    else
+    if [ -z "$pass" ]; then
+      echoi "Generating self-signed certificate without password"
+      echod "Running OpenSSL command: openssl req -x509 -new -noenc -keyout $ca_key_out -out $ca_cert_out -days $days -sha384 -extensions v3_ca -config $ca_conf_out"
+      if ! openssl req \
+                   -x509 \
+                   -new \
+                   -keyout "$ca_key_out" \
+                   -out "$ca_cert_out" \
+                   -days "$days" \
+                   -noenc \
+                   -sha384 \
+                   -keyform PEM \
+                   -extensions v3_ca \
+                   -config "$ca_conf_out" 2>/dev/null; then
+        echoe "Failed to generate self-signed certificate"
         return 1
+      fi
+    elif [ -n "$pass" ] && [ "$no_argon" = "false" ]; then
+      echoi "Generating self-signed certificate with password using Argon2id KDF"
+      echod "Running OpenSSL command: openssl req -x509 -new -keyout $ca_key_out -out $ca_cert_out -days $days -sha384 -extensions v3_ca -config $ca_conf_out"
+      if ! _create_argon2id_derived_key_pw "$pass" "$salt" | \
+      openssl req \
+              -x509 \
+              -new \
+              -keyout "$ca_key_out" \
+              -out "$ca_cert_out" \
+              -passout stdin \
+              -days "$days" \
+              -sha384 \
+              -extensions v3_ca \
+              -config "$ca_conf_out" 2>/dev/null; then
+        echoe "Failed to generate self-signed certificate"
+        return 1
+      fi
+    elif [ -n "$pass" ] && [ "$no_argon" = "true" ]; then
+      echoi "Generating self-signed certificate with password using PBKDF2 KDF"
+      echod "Running OpenSSL command: openssl req -x509 -new -keyout $ca_key_out -out $ca_cert_out -days $days -sha384 -extensions v3_ca -config $ca_conf_out"
+      if ! _create_pbkdf2_derived_key_pw "$ca_pass" | \
+      openssl req \
+              -x509 \
+              -new \
+              -keyout "$ca_key_out" \
+              -out "$ca_cert_out" \
+              -days "$days" \
+              -passout stdin \
+              -sha384 \
+              -extensions v3_ca \
+              -config "$ca_conf_out" 2>/dev/null; then
+        echoe "Failed to generate self-signed certificate"
+        return 1
+      fi
     fi
+
+    # Check if certificate was created
+    if [ ! -f "$ca_cert_out" ]; then
+      echoe "Certificate file $ca_cert_out was not created"
+      return 1
+    fi
+
+    # Verify certificate
+    echov "Verifying generated self-signed certificate..."
+
+    echod "Calling: openssl x509 -in $ca_cert_out -noout -text"
+    if ! openssl x509 -in "$ca_cert_out" -noout -text >/dev/null 2>&1; then
+      echoe "Self-signed certificate verification failed"
+      return 1
+    fi
+    echov "Self-signed certificate verification successful"
+
+    echod "Calling: openssl verify -CAfile $ca_cert_out $ca_cert_out"
+    if ! openssl verify -CAfile "$ca_cert_out" "$ca_cert_out" >/dev/null 2>&1; then
+      echoe "Self-signed certificate chain verification failed"
+      return 1
+    fi
+    echov "Self-signed certificate chain verification successful"
+  )
+  status=$?
+  echod "Self-signed certificate subshell exited with status: $status"
+  if [ "$status" -eq 0 ]; then
+    if set_permissions_and_owner "$ca_key_out" 400 && \
+       set_permissions_and_owner "$ca_cert_out" 444 ; then
+      echosv "Creating self-signed certificate successful"
+      return 0
+    fi
+  else
+    return 1
+  fi
 }
 
 _create_and_verify_fullchain() {
-    cert_file="$1"
-    fullchain_out="$2"
+  cert_file="$1"
+  fullchain_out="$2"
 
-    echod "Starting _create_and_verify_fullchain with parameters:"
-    echod "     cert_file: $cert_file"
-    echod " fullchain_out: $fullchain_out"
+  echod "Starting _create_and_verify_fullchain with parameters:"
+  echod "     cert_file: $cert_file"
+  echod " fullchain_out: $fullchain_out"
 
-    (
-        echoi "Creating certificate chain"
-        parent_cert_index="$(_get_parent_cert_index "$cert_out")"
-        parent_cert="$(get_value_from_index "$parent_cert_index" "cert")"
-        echod "Parent_cert_index $parent_cert_index parent_cert $parent_cert"
-        # Create chain
-        cat "$cert_out" "$parent_cert" > "$fullchain_out" || {
-            echoe "Error while concatenating cert files and writing to fullchain_out: $fullchain_out"
-            return 1
-        }
+  (
+    echoi "Creating certificate chain"
+    issuer_cert_index="$(_get_issuer_cert_index "$cert_out")"
+    issuer_cert="$(get_value_from_index "$issuer_cert_index" "cert")"
+    root_issuer_idx="$(get_value_from_index "$issuer_cert_index" "issuer")"
 
-        # Validate chain file
-        if [ ! -f "$fullchain_out" ] || [ ! -r "$fullchain_out" ]; then
-            echoe "File not found or readable: $fullchain_out"
-        fi
+    # Create chain
+    echod "Issuer index: $issuer_cert_index"
+    echod "Issuer cert file path: $issuer_cert"
+    { cat "$cert_out"; printf "\n"; cat "$issuer_cert"; } > "$fullchain_out"
 
-        # Verify chain file
-        if ! openssl verify -CAfile "$parent_cert" "$fullchain_out" 2>/dev/null; then
-            echoe "Fullchain certificate verification failed."
-            exit 1
-        fi
-
-        echosv "Certificate chain successfully created"
-        return 0
-    )
-    status=$?
-    echod "Fullchain certification creation subshell exited with status: $status"
-    if [ "$status" -eq 0 ]; then
-        set_permissions_and_owner "$fullchain_out" 444
-        return 0
+    if [ -n "$root_issuer_idx" ]; then
+      root_issuer_cert="$(get_value_from_index "$root_issuer_idx" "cert")"
+      { printf "\n"; cat "$root_issuer_cert"; } > "$fullchain_out"
+      echod "RootCA issuer index: $root_issuer_idx"
+      echod "RootCA issuer cert file path: $root_issuer_cert"
     fi
+
+    # Validate chain file
+    if [ ! -s "$fullchain_out" ]; then
+      echoe "File not found or readable: $fullchain_out"
+      return 1
+    fi
+
+    # Verify chain file
+    [ -n "$root_issuer_cert" ] && issuer_cert="$root_issuer_cert"
+    echod "Calling openssl verify -CAfile \"$issuer_cert\" \"$fullchain_out\""
+    if ! openssl verify -CAfile "$issuer_cert" "$fullchain_out" >/dev/null 2>&1; then
+      echoe "Fullchain certificate verification failed."
+      exit 1
+    fi
+
+    echosv "Certificate chain successfully created"
+    return 0
+  )
+  status=$?
+  echod "Fullchain certification creation subshell exited with status: $status"
+  if [ "$status" -ne 0 ]; then
     return 1
+  fi
+  set_permissions_and_owner "$fullchain_out" 444
+  return 0
 }
 
 
 create_private_key() {
-    key_name="${1:-}" && [ -z "$key_name" ] && echoe "Key name is required" && return 1
-    index="${key_name:+"$(echo "$1" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")"}"
-    if index_exists "$index"; then
-        echoe "Normalized key_name:$key_name ($index) already exists in database"
+  key_name="${1:-}" && [ -z "$key_name" ] && echoe "Key name is required" && return 1
+  index="${key_name:+"$(echo "$1" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")"}"
+  if has_index "$index"; then
+    echoe "Normalized key_name:$key_name ($index) already exists in database"
+    return 1
+  fi
+
+  key_out="${2:+$(absolutepathidx "$2" "$index")}"
+  key_out="${2:-$(absolutepathidx "$DC_KEY/key.pem" "$index")}"
+
+  password="${3:+$([ -s "$3" ] && absolutepath "$3")}"
+
+  salt_out="${4:+$(absolutepathidx "$4" "$index")}"
+  salt_out="${4:-$(absolutepathidx "$DC_KEY/key.salt" "$index")}"
+
+  no_argon="${5:-false}"
+
+  echoi "Creating openssl private key..."
+
+  echod "Starting create_private_key with parameters:"
+  echod "      key_name: $key_name"
+  echod "         index: $index"
+  echod "       key_out: $key_out"
+  echod "      password: $([ -n "$password" ] && echo "[SET]")"
+  echod "      salt_out: $salt_out"
+  echod "      no-argon: $no_argon"
+
+  # Validate inputs
+  if [ -z "$key_name" ] && [ -z "$key_out" ]; then
+    echoe "Either key_name or key_out is required"
+    return 1
+  fi
+
+  # Validate output directory
+  for d in "$(dirname "$key_out")" "$(dirname "$salt_out")"; do
+    if [ ! -d "$d" ]; then
+      echow "Output directory $d does not exist"
+      mkdir -p "$d" || {
+        echoe "Creating directory failed: $d"
         return 1
-    fi
+      }
 
-    key_out="${2:+$(absolutepathidx "$2" "$index")}"
-    key_out="${2:-$(absolutepathidx "$DC_KEY/key.pem" "$index")}"
-
-    password="${3:+$([ -s "$3" ] && absolutepath "$3")}"
-
-    salt_out="${4:+$(absolutepathidx "$4" "$index")}"
-    salt_out="${4:-$(absolutepathidx "$DC_KEY/key.salt" "$index")}"
-
-    no_argon="${5:-false}"
-
-    echod "Starting create_private_key with parameters:"
-    echod "      key_name: $key_name"
-    echod "         index: $index"
-    echod "       key_out: $key_out"
-    echod "      password: $([ -n "$password" ] && echo "[SET]")"
-    echod "      salt_out: $salt_out"
-    echod "      no-argon: $no_argon"
-
-    # Validate inputs
-    if [ -z "$key_name" ] && [ -z "$key_out" ]; then
-        echoe "Either key_name or key_out is required"
+      set_permissions_and_owner "$d" 750 || {
+        echoe "Failed calling set_permissions_and_owner $d 750"
         return 1
+      }
     fi
+  done
 
-    # Validate output directory
-    for d in "$(dirname "$key_out")" "$(dirname "$salt_out")"; do
-        if [ ! -d "$d" ]; then
-            echow "Output directory $d does not exist"
-            mkdir -p "$d" || {
-                echoe "Creating directory failed: $d"
-                return 1
-            }
-
-            set_permissions_and_owner "$d" 750 || {
-                echoe "Failed calling set_permissions_and_owner $d 750"
-                return 1
-            }
-        fi
-    done
-
-    # Auto-generate salt if password is provided and salt_out is empty
-    if [ -n "$password" ] && [ "$no_argon" = "false" ]; then
-        echov "Creating and writing salt"
-        echod "Calling _create_saltfile $salt_out"
-        _create_saltfile "$salt_out" || {
-            echoe "Salt file creation failed: $salt_out"
-            return 1
-        }
-        echosv "Creating saltfile: $salt_out successful"
-    fi
-
-    # Generate and verify key
-    echoi "Creating openssl private key..."
-    echod "Calling _create_and_verify_key $key_out $password $salt_out $no_argon"
-    _create_and_verify_key "$key_out" "$password" "$salt_out" "$no_argon" || {
-        echoe "Failed to generate private key for $key_out"
-        if [ -n "$salt_out" ] && [ ! -f "$salt_out" ]; then
-            echoe "Salt file $salt_out does not exist"
-        elif [ -n "$password" ] && [ ! -s "$password" ]; then
-            echoe "Password file $password is empty or inaccessible"
-        else
-            echoe "Check OpenSSL error output for details"
-        fi
-        return 1
+  # Auto-generate salt if password is provided and salt_out is empty
+  if [ -n "$password" ] && [ "$no_argon" = "false" ]; then
+    echov "Creating and writing salt"
+    echod "Calling _create_saltfile $salt_out"
+    _create_saltfile "$salt_out" || {
+      echoe "Salt file creation failed: $salt_out"
+      return 1
     }
-    echosv "OpenSSL Private Key file created and verified"
+    echosv "Creating saltfile: $salt_out successful"
+  fi
 
-    # Update database with basename and directory
-    add_to_ssl_keys_database "$index" "key" "$key_out"
-    if [ -n "$password" ] && [ -n "$salt_out" ] && [ "$no_argon" = "false" ]; then
-        add_to_ssl_keys_database "$index" "salt" "$salt_out"
-        add_to_ssl_keys_database "$index" "kdf" "argon2id"
-    elif [ -n "$password" ] && { [ -z "$salt_out" ] || [ "$no_argon" = "true" ]; }; then
-        add_to_ssl_keys_database "$index" "kdf" "pbkdf2"
+  # Generate and verify key
+  echod "Calling _create_and_verify_key $key_out $password $salt_out $no_argon"
+  _create_and_verify_key "$key_out" "$password" "$salt_out" "$no_argon" || {
+    echoe "Failed to generate private key for $key_out"
+    if [ -n "$salt_out" ] && [ ! -f "$salt_out" ]; then
+      echoe "Salt file $salt_out does not exist"
+    elif [ -n "$password" ] && [ ! -s "$password" ]; then
+      echoe "Password file $password is empty or inaccessible"
+    else
+      echoe "Check OpenSSL error output for details"
     fi
-    add_to_ssl_keys_database "$index" "name" "$1"
+    return 1
+  }
+  echosv "OpenSSL Private Key file created and verified"
 
-    echos "Private key creation successful"
-    return 0
+  # Update database with basename and directory
+  add_to_ssl_certs "$index" "key" "$key_out"
+  if [ -n "$password" ] && [ -n "$salt_out" ] && [ "$no_argon" = "false" ]; then
+      add_to_ssl_certs "$index" "salt" "$salt_out"
+      add_to_ssl_certs "$index" "kdf" "argon2id"
+  elif [ -n "$password" ] && { [ -z "$salt_out" ] || [ "$no_argon" = "true" ]; }; then
+      add_to_ssl_certs "$index" "kdf" "pbkdf2"
+  fi
+  add_to_ssl_certs "$index" "name" "$1"
+
+  echos "Private key creation successful"
+  return 0
 }
+
 
 create_certificate_authority() {
-    ca_name="$1" && [ -z "$1" ] && echoe "CA name is required" && return 1
-    index="${ca_name:+$(echo "$ca_name" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
+  ca_name="$1" && [ -z "$1" ] && echoe "CA name is required" && return 1
+  index="${ca_name:+$(echo "$ca_name" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
 
-    if index_exists "$index"; then
-        echoe "Normalized $ca_name ($index) already exists in database"
+  if has_index "$index"; then
+    echoe "Normalized $ca_name ($index) already exists in database"
+    return 1
+  fi
+
+  ca_key_out="${2:+$(absolutepathidx "$2" "$index")}"
+  ca_key_out="${2:-$(absolutepathidx "$DC_CAKEY/ca-key.pem" "$index")}"
+
+  ca_cert_out="${3:+$(absolutepathidx "$3" "$index")}"
+  ca_cert_out="${3:-$(absolutepathidx "$DC_CA/ca.pem" "$index")}"
+
+  ca_pass="${4:+$([ -s "$4" ] && absolutepath "$4")}"
+  no_argon="${6:-false}"
+
+  ca_salt_out="${5:+$(absolutepathidx "$5" "$index")}"
+  ca_salt_out="${5:-$([ "$no_argon" = "false" ] \
+                      && [ -n "$ca_pass" ] \
+                      && absolutepathidx "$DC_CAKEY/ca-key.salt" "$index")}"
+
+  ca_conf_out="${7:+$(absolutepathidx "$7" "$index")}"
+  ca_conf_out="${7:-$(absolutepathidx "$DC_CA/ca.conf" "$index")}"
+
+  ca_csr_out="${8:+$(absolutepathidx "$8" "$index")}"
+  ca_csr_out="${8:-$(absolutepathidx "$DC_CA/ca.csr" "$index")}"
+
+  keep_ca_csr="${9:-false}"
+  intermediate="${10:-false}"
+  email="${11:-}"
+  country="${12:-}"
+  state="${13:-}"
+  locality="${14:-}"
+  organization="${15:-}"
+  orgunit="${16:-}"
+  days="${17:-3650}"
+
+  if [ "$intermediate" = "true" ]; then
+    root_ca_index="${18:+$(echo "${18}" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
+    root_ca_index="${root_ca_index:-$(get_defaultRootCA)}"
+
+    if [ -z "$root_ca_index" ] && [ "$intermediate" = "true" ]; then
+      echoe "Root CA Name --rootca must be set."
+      return 1
+    fi
+
+    root_ca_key="${19:+$([ -s "${19}" ] && absolutepath "${19}")}"
+    root_ca_key="${root_ca_index:+$(get_value_from_ca_index "$root_ca_index" "key")}"
+
+    root_ca_cert="${20:+$([ -s "${20}" ] && absolutepath "${20}")}"
+    root_ca_cert="${root_ca_index:+$(get_value_from_ca_index "$root_ca_index" "cert")}"
+
+    root_ca_pass="${21:+$([ -s "${21}" ] && absolutepath "${21}")}"
+    root_no_argon="${23:-false}"
+
+    root_ca_salt="${22:+$([ -s "${22}" ] && absolutepath "${22}")}"
+    root_ca_salt="${root_ca_index:+$([ "$root_no_argon" = "false" ] \
+                                     && [ -n "$root_ca_pass" ] \
+                                     && get_value_from_ca_index "$root_ca_index" "salt")}"
+
+    fullchain_out="${26:+$(absolutepathidx "${26}" "$index")}"
+    fullchain_out="${26:-$(absolutepathidx "${DC_CERT}/fullchain.pem" "$index")}"
+  fi
+
+  set_as_default="${24:-false}"
+  set_as_defaultRoot="${25:-false}"
+
+  echod "Starting create_certificate_authority with parameters:"
+  echod "           ca_name: $ca_name"
+  echod "       ca_cert_out: $ca_cert_out"
+  echod "        ca_key_out: $ca_key_out"
+  echod "           ca_pass: $([ -n "$ca_pass" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "       ca_salt_out: $ca_salt_out"
+  echod "          no_argon: $no_argon"
+  echod "       ca_conf_out: $ca_conf_out"
+  echod "        ca_csr_out: $ca_csr_out"
+  echod "       keep_ca_csr: $keep_ca_csr"
+  echod "      intermediate: $intermediate"
+  echod "             email: $email"
+  echod "           country: $country"
+  echod "             state: $state"
+  echod "          locality: $locality"
+  echod "      organization: $organization"
+  echod "           orgunit: $orgunit"
+  echod "              days: $days"
+  echod "     root_ca_index: $root_ca_index"
+  echod "       root_ca_key: $root_ca_key"
+  echod "      root_ca_cert: $root_ca_cert"
+  echod "     root_no_argon: $root_no_argon"
+  echod "      root_ca_pass: $([ -n "$root_ca_pass" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "      root_ca_salt: $([ -n "$root_ca_salt" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "     fullchain_out: $fullchain_out"
+
+  # Validate root CA parameters for intermediate CA
+  if [ "$intermediate" = "true" ]; then
+    if ! default_ca_exists && [ -z "$root_ca_index" ] && { [ -z "$root_ca_key" ] || [ -z "$root_ca_cert" ]; }; then
+      echoe "Root CA name or Root CA key and certificate are required for intermediate CA"
+      return 1
+    fi
+    ca_storage_type="intermediate"
+  else
+    ca_storage_type="root"
+  fi
+
+  # Set default file paths
+  ca_cert_dir="$(dirname -- "$ca_cert_out")"
+  ca_key_dir="$(dirname -- "$ca_key_out")"
+  ca_conf_dir="$(dirname -- "$ca_conf_out")"
+  ca_salt_dir="$(dirname -- "$ca_salt_out")"
+  ca_csr_dir="$(dirname -- "$ca_csr_out")"
+
+  for d in "$ca_cert_dir" "$ca_key_dir" "$ca_conf_dir" "$ca_salt_dir" "$ca_csr_dir"; do
+    # Validate directories and fix permissions
+    if [ ! -d "$d" ]; then
+      echow "Directory $d does not exist"
+      mkdir -p -- "$d" || {
+        echoe "Not able to create directory $d"
         return 1
+      }
+      set_permissions_and_owner "$d" 750
     fi
+  done
 
-    ca_key_out="${2:+$(absolutepathidx "$2" "$index")}"
-    ca_key_out="${2:-$(absolutepathidx "$DC_CAKEY/ca-key.pem" "$index")}"
-
-    ca_cert_out="${3:+$(absolutepathidx "$3" "$index")}"
-    ca_cert_out="${3:-$(absolutepathidx "$DC_CA/ca.pem" "$index")}"
-
-    ca_pass="${4:+$([ -s "$4" ] && absolutepath "$4")}"
-    no_argon="${6:-false}"
-
-    ca_salt_out="${5:+$(absolutepathidx "$5" "$index")}"
-    ca_salt_out="${5:-$([ "$no_argon" = "false" ] \
-                        && [ -n "$ca_pass" ] \
-                        && absolutepathidx "$DC_CAKEY/ca-key.salt" "$index")}"
-
-    ca_conf_out="${7:+$(absolutepathidx "$7" "$index")}"
-    ca_conf_out="${7:-$(absolutepathidx "$DC_CA/ca.conf" "$index")}"
-
-    ca_csr_out="${8:+$(absolutepathidx "$8" "$index")}"
-    ca_csr_out="${8:-$(absolutepathidx "$DC_CA/ca.csr" "$index")}"
-
-    keep_ca_csr="${9:-false}"
-    intermediate="${10:-false}"
-    email="${11:-}"
-    country="${12:-}"
-    state="${13:-}"
-    locality="${14:-}"
-    organization="${15:-}"
-    orgunit="${16:-}"
-    days="${17:-3650}"
-
-    if [ "$intermediate" = "true" ]; then
-        root_ca_index="${18:+$(echo "${18}" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
-        root_ca_index="${root_ca_index:-$(get_defaultRootCA)}"
-
-        if [ -z "$root_ca_index" ] && [ "$intermediate" = "true" ]; then
-            echoe "Root CA Name --rootca must be set."
-            return 1
-        fi
-
-        root_ca_key="${19:+$([ -s "${19}" ] && absolutepath "${19}")}"
-        root_ca_key="${root_ca_index:+$(get_value_from_ca_index "$root_ca_index" "key")}"
-
-        root_ca_cert="${20:+$([ -s "${20}" ] && absolutepath "${20}")}"
-        root_ca_cert="${root_ca_index:+$(get_value_from_ca_index "$root_ca_index" "cert")}"
-
-        root_ca_pass="${21:+$([ -s "${21}" ] && absolutepath "${21}")}"
-        root_no_argon="${23:-false}"
-
-        root_ca_salt="${22:+$([ -s "${22}" ] && absolutepath "${22}")}"
-        root_ca_salt="${root_ca_index:+$([ "$root_no_argon" = "false" ] \
-                                         && [ -n "$root_ca_pass" ] \
-                                         && get_value_from_ca_index "$root_ca_index" "salt")}"
-    fi
-
-    set_as_default="${24:-false}"
-    set_as_defaultRoot="${25:-false}"
-
-    echod "Starting create_certificate_authority with parameters:"
-    echod "           ca_name: $ca_name"
-    echod "       ca_cert_out: $ca_cert_out"
-    echod "        ca_key_out: $ca_key_out"
-    echod "           ca_pass: $([ -n "$ca_pass" ] && echo "[SET]" || echo "[EMPTY]")"
-    echod "       ca_salt_out: $ca_salt_out"
-    echod "          no_argon: $no_argon"
-    echod "       ca_conf_out: $ca_conf_out"
-    echod "        ca_csr_out: $ca_csr_out"
-    echod "       keep_ca_csr: $keep_ca_csr"
-    echod "      intermediate: $intermediate"
-    echod "             email: $email"
-    echod "           country: $country"
-    echod "             state: $state"
-    echod "          locality: $locality"
-    echod "      organization: $organization"
-    echod "           orgunit: $orgunit"
-    echod "              days: $days"
-    echod "     root_ca_index: $root_ca_index"
-    echod "       root_ca_key: $root_ca_key"
-    echod "      root_ca_cert: $root_ca_cert"
-    echod "     root_no_argon: $root_no_argon"
-    echod "      root_ca_pass: $([ -n "$root_ca_pass" ] && echo "[SET]" || echo "[EMPTY]")"
-    echod "      root_ca_salt: $([ -n "$root_ca_salt" ] && echo "[SET]" || echo "[EMPTY]")"
-
-    # Validate root CA parameters for intermediate CA
-    if [ "$intermediate" = "true" ]; then
-        if ! default_ca_exists && [ -z "$root_ca_index" ] && { [ -z "$root_ca_key" ] || [ -z "$root_ca_cert" ]; }; then
-            echoe "Root CA name or Root CA key and certificate are required for intermediate CA"
-            return 1
-        fi
-        ca_storage_type="intermediate"
-    else
-        ca_storage_type="root"
-    fi
-
-    # Set default file paths
-    ca_cert_dir="$(dirname "$ca_cert_out")"
-    ca_key_dir="$(dirname "$ca_key_out")"
-    ca_conf_dir="$(dirname "$ca_conf_out")"
-    ca_salt_dir="$(dirname "$ca_salt_out")"
-    ca_csr_dir="$(dirname "$ca_csr_out")"
-
-    for d in "$ca_cert_dir" "$ca_key_dir" "$ca_conf_dir" "$ca_salt_dir" "$ca_csr_dir"; do
-        # Validate directories and fix permissions
-        if [ ! -d "$d" ]; then
-            echow "Directory $d does not exist"
-            mkdir -p "$d" || {
-                echoe "Not able to create directory $d"
-                return 1
-            }
-            set_permissions_and_owner "$d" 750
-        fi
-    done
-
-    # Status
-    echod "Final ca_cert_file: $ca_cert_out"
-    echod "Final ca_key_file: $ca_key_out"
-    echod "Final ca_conf_file: $ca_conf_out"
-    [ -n "$ca_salt_out" ] && echod "Final ca_salt_file: $ca_salt_out"
-    [ "$intermediate" = "true" ] && echod "Final ca_csr_file: $ca_csr_out"
+  # Status
+  echod "Final ca_cert_file: $ca_cert_out"
+  echod "Final ca_key_file: $ca_key_out"
+  echod "Final ca_conf_file: $ca_conf_out"
+  [ -n "$ca_salt_out" ] && echod "Final ca_salt_file: $ca_salt_out"
+  [ "$intermediate" = "true" ] && echod "Final ca_csr_file: $ca_csr_out"
 
 
-    # Generate salt if needed
-    if [ -n "$ca_pass" ] && [ "$no_argon" = "false" ]; then
-      echod "Calling _create_saltfile with $ca_salt_out"
-        if ! _create_saltfile "$ca_salt_out"; then
-            echoe "Failed to write salt file $ca_salt_out"
-            return 1
-        fi
-        echod "Generated new salt file: $ca_salt_out"
-    fi
-
-    # Create SSL config
-    echov "Generating SSL configuration..."
-    echod "Calling _create_sslconfig with: $ca_storage_type, , $email, $country, $state, $locality, $organization, $orgunit, $ca_name, , $ca_conf_out"
-    if ! _create_sslconfig "$ca_storage_type" "$domains,$ips" "$email" "$country" "$state" "$locality" \
-        "$organization" "$orgunit" "$ca_name" "" "$ca_conf_out"; then
-        echoe "Failed to generate SSL configuration"
+  # Generate salt if needed
+  if [ -n "$ca_pass" ] && [ "$no_argon" = "false" ]; then
+    echod "Calling _create_saltfile with $ca_salt_out"
+      if ! _create_saltfile "$ca_salt_out"; then
+        echoe "Failed to write salt file $ca_salt_out"
         return 1
-    fi
-    echosv "Creating ssl config file succesful"
-
-    echoi "Creating $ca_storage_type: $ca_name"
-    echov "Certificate path: $ca_cert_out"
-    echov "Private Key path: $ca_key_out"
-    echov "Valid for: $days days"
-
-    # Generate certificate
-    if [ "$intermediate" = "false" ]; then
-        echoi "Generating self-signed root CA certificate"
-        # Create self signed cert and key
-        echod "Calling _create_and_verify_sscert with: $ca_key_out, $ca_cert_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $no_argon, $days"
-        if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$no_argon" "$days"; then
-            rm -f -- "$ca_key_out" "$ca_cert_out" || true
-            echoe "Failed to generate self-signed CA certificate"
-            return 1
-        fi
-        echosv "Creating self signed certificate and private key successful"
-    elif [ "$intermediate" = "true" ]; then
-        echoi "Generating intermediate CA certificate signed by $root_ca_index"
-        # Create and verify key
-        echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $no_argon"
-        if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$no_argon"; then
-            echoe "Failed to generate CA private key"
-            return 1
-        fi
-        echosv "Creating and verifying KEY successful"
-
-        # Create csr and verify
-        echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out"
-        if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out"; then
-            echoe "Failed to generate CSR for intermediate CA"
-            return 1
-        fi
-        echosv "Creating and verifying CSR successful"
-
-        # Create cert and verify
-        echod "Calling _create_and_verify_cert with: $ca_cert_out, $ca_csr_out, $ca_conf_out, $root_ca_key, $root_ca_cert, ${root_ca_pass:-"ROOT CA PASS"}, ${root_ca_salt:-"ROOT_CA_SALT"}, v3_ca, $days"
-        if ! _create_and_verify_cert "$ca_cert_out" "$ca_csr_out" "$ca_conf_out" "$root_ca_key" "$root_ca_cert" "$root_ca_pass" "$root_ca_salt" "v3_ca" "$days"; then
-            echoe "Failed to sign intermediate CA certificate"
-            return 1
-        fi
-        echosv "Creating and verifying CERT successful"
-
-        if [ "$keep_ca_csr" != "true" ]; then
-            rm -f -- "$ca_csr_out"
-        fi
-
-        # Adding issuer to index dictionary if intermediate
-        add_to_ca_database "$ca_storage_type" "$index" "issuer" "$root_ca_index"
-    fi
-
-    # Register CA in database
-    echod "Registering CA in database..."
-    add_to_ca_database "$ca_storage_type" "$index" "key" "$ca_key_out"
-    add_to_ca_database "$ca_storage_type" "$index" "cert" "$ca_cert_out"
-
-    # Store name
-    add_to_ca_database "$ca_storage_type" "$index" "name" "$ca_name"
-
-    # Store Date
-    created=$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
-    add_to_ca_database "$ca_storage_type" "$index" "created" "$created"
-
-    # Store validity dates
-    valid_from_raw=$(openssl x509 -in "$ca_cert_out" -noout -startdate | sed 's/notBefore=//')
-    valid_until_raw=$(openssl x509 -in "$ca_cert_out" -noout -enddate | sed 's/notAfter=//')
-    valid_from=$(date -u -d "$valid_from_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$valid_from_raw")
-    valid_until=$(date -u -d "$valid_until_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$valid_until_raw")
-    add_to_ca_database "$ca_storage_type" "$index" "valid_from" "$valid_from"
-    add_to_ca_database "$ca_storage_type" "$index" "valid_until" "$valid_until"
-
-    # Store serial
-    serial=$(openssl x509 -in "$ca_cert_out" -noout -serial | sed 's/serial=//')
-    add_to_ca_database "$ca_storage_type" "$index" "serial" "$serial"
-
-    # Store fingerprint
-    fingerprint=$(openssl x509 -in "$ca_cert_out" -noout -fingerprint | sed 's/SHA1 Fingerprint=//')
-    add_to_ca_database "$ca_storage_type" "$index" "fingerprint" "$fingerprint"
-
-    # Store salt if was created
-    if [ -n "$ca_pass" ] && [ -n "$ca_salt_out" ]; then
-        add_to_ca_database "$ca_storage_type" "$index" "salt" "$ca_salt_out"
-        add_to_ca_database "$ca_storage_type" "$index" "kdf" "argon2id"
-    elif [ -n "$ca_pass" ] && [ -z "$ca_salt_out" ]; then
-        add_to_ca_database "$ca_storage_type" "$index" "kdf" "pbkdf2"
-    fi
-
-    # Set as default CA if first root CA
-    if ! has_defaultRootCA || [ "$set_as_defaultRoot" = "true" ]; then
-      echoi "Set as defaultRootCA: $index"
-      set_defaultRootCA "$index"
-      echosv "Setting defaultRootCA successful."
-    fi
-
-    if { has_defaultRootCA && ! has_defaultCA; } || [ "$set_as_default" = "true" ]; then
-      # check if CA is not in root CA dictionary
-      defaultRootCA=$(get_value_from_caroot "$index")
-      if [ "$index" != "$defaultRootCA" ]; then
-        echoi "Set as defaultCA: $index"
-        set_defaultCA "$index"
-        echosv "Setting defaultCA successful."
       fi
+      echod "Generated new salt file: $ca_salt_out"
+  fi
+
+  # Create SSL config
+  echov "Generating SSL configuration..."
+  echod "Calling _create_sslconfig with: $ca_storage_type, , $email, $country, $state, $locality, $organization, $orgunit, $ca_name, , $ca_conf_out"
+  if ! _create_sslconfig "$ca_storage_type" "$domains,$ips" "$email" "$country" "$state" "$locality" \
+    "$organization" "$orgunit" "$ca_name" "" "$ca_conf_out"; then
+    echoe "Failed to generate SSL configuration"
+    return 1
+  fi
+  echosv "Creating ssl config file succesful"
+
+  echoi "Creating $ca_storage_type: $ca_name"
+  echov "Certificate path: $ca_cert_out"
+  echov "Private Key path: $ca_key_out"
+  echov "Valid for: $days days"
+
+  # Generate certificate
+  if [ "$intermediate" = "false" ]; then
+    echoi "Generating self-signed root CA certificate"
+    # Create self signed cert and key
+    echod "Calling _create_and_verify_sscert with: $ca_key_out, $ca_cert_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $no_argon, $days"
+    if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$no_argon" "$days"; then
+      rm -f -- "$ca_key_out" "$ca_cert_out" || true
+      echoe "Failed to generate self-signed CA certificate"
+      return 1
+    fi
+    echosv "Creating self signed certificate and private key successful"
+  elif [ "$intermediate" = "true" ]; then
+
+    echoi "Generating intermediate CA certificate signed by $root_ca_index"
+    # Create and verify key
+    echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $no_argon"
+    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$no_argon"; then
+      echoe "Failed to generate CA private key"
+      return 1
+    fi
+    echosv "Creating and verifying KEY successful"
+
+    # Create csr and verify
+    echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out"
+    if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out"; then
+      echoe "Failed to generate CSR for intermediate CA"
+      return 1
+    fi
+    echosv "Creating and verifying CSR successful"
+
+    # Create cert and verify
+    echod "Calling _create_and_verify_cert with: $ca_cert_out, $ca_csr_out, $ca_conf_out, $root_ca_key, $root_ca_cert, ${root_ca_pass:-"ROOT CA PASS"}, ${root_ca_salt:-"ROOT_CA_SALT"}, v3_ca, $days"
+    if ! _create_and_verify_cert "$ca_cert_out" "$ca_csr_out" "$ca_conf_out" "$root_ca_key" "$root_ca_cert" "$root_ca_pass" "$root_ca_salt" "v3_ca" "$days"; then
+      echoe "Failed to sign intermediate CA certificate"
+      return 1
+    fi
+    echosv "Creating and verifying CERT successful"
+
+    if [ "$keep_ca_csr" != "true" ]; then
+      rm -f -- "$ca_csr_out" || {
+        echoe "Failed removing file: $ca_csr_out"
+        return 1
+      }
     fi
 
-    # Display CA information
-    ca_subject=$(openssl x509 -in "$ca_cert_out" -noout -subject | sed 's/subject=//')
-    ca_issuer=$(openssl x509 -in "$ca_cert_out" -noout -issuer | sed 's/issuer=//')
-    echosv ""
-    echosv "CA Details:"
-    echosv "  Issuer: $ca_issuer"
-    echosv "  Subject: $ca_subject"
-    echosv "  Serial: $serial"
-    echosv "  Valid from: $valid_from"
-    echosv "  Valid until: $valid_until"
-    echosv ""
-    echos "Certificate Authority $ca_name created successfully"
-    return 0
+    # Adding issuer to index dictionary if intermediate
+    add_to_ca_database "$ca_storage_type" "$index" "issuer" "$root_ca_index"
+
+    # Create certificate chain if is intermediate
+    if _create_and_verify_fullchain "$ca_cert_out" "$fullchain_out"; then
+      echosv "Creating and verifying certificate chain file successful"
+      add_to_ca_database "$ca_storage_type" "$index" "fullchain" "$fullchain_out"
+    else
+      echow "Calling _create_and_verify_fullchain $cert_out $fullchain_out failed."
+    fi
+  fi
+
+  # Register CA in database
+  echod "Registering CA in database..."
+  add_to_ca_database "$ca_storage_type" "$index" "key" "$ca_key_out"
+  add_to_ca_database "$ca_storage_type" "$index" "cert" "$ca_cert_out"
+
+  # Store name
+  add_to_ca_database "$ca_storage_type" "$index" "name" "$ca_name"
+
+  # Store Date
+  created=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+  add_to_ca_database "$ca_storage_type" "$index" "created" "$created"
+
+  # Store validity dates
+  valid_from_raw=$(openssl x509 -in "$ca_cert_out" -noout -startdate | sed 's/notBefore=//')
+  valid_until_raw=$(openssl x509 -in "$ca_cert_out" -noout -enddate | sed 's/notAfter=//')
+  valid_from=$(date -u -d "$valid_from_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+  valid_until=$(date -u -d "$valid_until_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+  add_to_ca_database "$ca_storage_type" "$index" "valid_from" "$valid_from"
+  add_to_ca_database "$ca_storage_type" "$index" "valid_until" "$valid_until"
+
+  # Store serial
+  serial=$(openssl x509 -in "$ca_cert_out" -noout -serial | sed 's/serial=//')
+  add_to_ca_database "$ca_storage_type" "$index" "serial" "$serial"
+
+  # Store fingerprint
+  fingerprint=$(openssl x509 -in "$ca_cert_out" -noout -fingerprint | sed 's/SHA1 Fingerprint=//')
+  add_to_ca_database "$ca_storage_type" "$index" "fingerprint" "$fingerprint"
+
+  # Store type (for exports)
+  add_to_ca_database $ca_storage_type "$index" "type" "$ca_storage_type"
+
+  # Store salt if was created
+  if [ -n "$ca_pass" ] && [ -n "$ca_salt_out" ]; then
+    add_to_ca_database "$ca_storage_type" "$index" "salt" "$ca_salt_out"
+    add_to_ca_database "$ca_storage_type" "$index" "kdf" "argon2id"
+  elif [ -n "$ca_pass" ] && [ -z "$ca_salt_out" ]; then
+    add_to_ca_database "$ca_storage_type" "$index" "kdf" "pbkdf2"
+  fi
+
+  # Set as default CA if first root CA
+  if ! has_defaultRootCA || [ "$set_as_defaultRoot" = "true" ]; then
+    echoi "Set as defaultRootCA: $index"
+    set_defaultRootCA "$index"
+    echosv "Setting defaultRootCA successful."
+  fi
+
+  if { ! has_defaultCA && ! has_index "$index" "rootCAs"; } || [ "$set_as_default" = "true" ]; then
+    defaultRootCA=$(get_defaultRootCA)
+    if [ ! "$defaultRootCA" = "$index" ]; then
+      echoi "Set as defaultCA: $index"
+      set_defaultCA "$index"
+      echosv "Setting defaultCA successful."
+    fi
+  fi
+
+  # Display CA information
+  ca_subject=$(openssl x509 -in "$ca_cert_out" -noout -subject | sed 's/subject=//')
+  ca_issuer=$(openssl x509 -in "$ca_cert_out" -noout -issuer | sed 's/issuer=//')
+  echosv ""
+  echosv "CA Details:"
+  echosv "  Issuer: $ca_issuer"
+  echosv "  Subject: $ca_subject"
+  echosv "  Serial: $serial"
+  echosv "  Valid from: $valid_from"
+  echosv "  Valid until: $valid_until"
+  echosv ""
+  echos "Certificate Authority $ca_name created successfully"
+  return 0
 }
+
 
 create_certificate_signing_request() {
   key_name="$1" && [ -z "$key_name" ] && echoe "Key name is required" && return 1
   index="${key_name:+$(echo "$1" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
 
-  if ! index_exists "$index" ; then
-      echow "Normalized $ca_name $index doesn't exist in database. Fallback to fetching from filename..."
+  if ! has_index "$index" ; then
+    echow "Normalized $ca_name $index doesn't exist in database. Fallback to fetching from filename..."
   fi
 
   key_file="${2:+$([ -s "${2}" ] && absolutepath "${2}")}"
-  key_file="${index:+$(get_value_from_keys_index "$index" "key")}"
+  key_file="${index:+$(get_value_from_certs_index "$index" "key")}"
 
   password="${3:+$([ -s "$3" ] && absolutepath "$3")}"
 
   salt="${4:+$([ -s "$4" ] && absolutepath "$4")}"
-  salt="${index:+$(get_value_from_keys_index "$index" "salt")}"
+  salt="${index:+$(get_value_from_certs_index "$index" "salt")}"
 
   csr_out="${5:+$(absolutepathidx "$5" "$index")}"
   csr_out="${5:-$(absolutepathidx "$DC_CERT/cert.csr" "$index")}"
@@ -1142,16 +1172,18 @@ create_certificate_signing_request() {
     return 1
   fi
 
-  echod "Certificate type set to: $type"
-
   # Create SSL config
   echoi "Creating SSL configuration for $type certificate"
-  echod "Calling _create_sslconfig $type, \"$domains,$ips\" $email $country $state $locality $organization $orgunit $common_name $crldist $cfg_out"
+  echod "Calling _create_sslconfig \"$type\" \"$domains,$ips\" \"$email\" \"$country\" \"$state\" \"$locality\" \"$organization\" \"$orgunit\" \"$common_name\" \"$crldist\" \"$cfg_out\""
   _create_sslconfig "$type" "$domains,$ips" "$email" "$country" "$state" "$locality" \
     "$organization" "$orgunit" "$common_name" "$crldist" "$cfg_out" || {
       echoe "Failed calling function _create_sslconfig"
       return 1
   }
+  echod "SSL config contents:"
+  while read -r line; do
+    echod "$line"
+  done < "$cfg_out"
   echosv "Creating ssl config file successful."
 
   # Create output directories if necessary
@@ -1159,7 +1191,7 @@ create_certificate_signing_request() {
     if [ ! -d "$d" ]; then
       echow "Couldn't find output directory: $d"
       echov "Creating output directory: $d"
-      mkdir -p "$d" || {
+      mkdir -p -- "$d" || {
         echoe "Failed to create directory: $d"
         return 1
       }
@@ -1177,181 +1209,195 @@ create_certificate_signing_request() {
   echoi "Generating Certificate Signing Request"
   echod "Calling _create_and_verify_csr $csr_out $key_file $password $salt $cfg_out"
   _create_and_verify_csr "$csr_out" "$key_file" "$password" "$salt" "$cfg_out" || {
-    echoe "Failed calling _create_and_verify_key"
+    echoe "Failed calling _create_and_verify_csr"
     rm -f -- "$cfg_out" "$csr_out" || true
     return 1
   }
   echosv "Creating and verifying CSR file succesful"
 
   # Add CSR to index
-  add_to_ssl_keys_database "$index" "csr" "$csr_out"
-  add_to_ssl_keys_database "$index" "cfg" "$cfg_out"
-  add_to_ssl_keys_database "$index" "type" "$type"
+  add_to_ssl_certs "$index" "csr" "$csr_out"
+  add_to_ssl_certs "$index" "cfg" "$cfg_out"
+  add_to_ssl_certs "$index" "type" "$type"
 
   echos "Created Certificate Signing Request (CSR) successfully"
   return 0
 }
 
 
-sign_certificate_request() {
-    csr_name="$1" && [ -z "$1" ] && echoe "CSR name is required" && return 1
+sign_certificate_request() {    # sign CSR
+  if ! has_defaultRootCA && ! has_defaultCA; then
+    echoe "No root or intermediate CAs found"
+    echow "Create a certificate authority before trying to sign any CSRs!"
+    return 1
+  fi
 
-    csr_file="${2:+$([ -s "${2}" ] && absolutepath "${2}")}"
-    index="${csr_name:+$(echo "$csr_name" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
+  csr_name="$1" && [ -z "$1" ] && echoe "CSR name is required" && return 1
 
-    csr_file="${index:+$(get_value_from_keys_index "$index" "csr")}"
-    index="${index:-${csr_file:+$(get_index_from_filename "$csr_file")}}"
+  csr_file="${2:+$([ -s "${2}" ] && absolutepath "${2}")}"
+  index="${csr_name:+$(echo "$csr_name" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
 
-    if ! index_exists "$index"; then
-        echoe "Normalized $csr_name ($index) doesn't exist in database."
-        return 1
-    fi
+  csr_file="${index:+$(get_value_from_certs_index "$index" "csr")}"
+  index="${index:-${csr_file:+$(get_index_from_filename "$csr_file")}}"
 
-    cert_out="${3:+$(absolutepathidx "$3" "$index")}"
-    cert_out="${3:-$(absolutepathidx "$DC_CERT/cert.pem" "$index")}"
+  if ! has_index "$index"; then
+    echoe "Normalized $csr_name ($index) doesn't exist in database."
+    return 1
+  fi
 
-    ca_index="${4:+$(echo "${4}" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
-    ca_cert_file="${5:+$([ -s "${5}" ] && absolutepath "${5}")}"
-    ca_key_file="${6:+$([ -s "${6}" ] && absolutepath "${6}")}"
-    ca_pass="${7:+$([ -s "${7}" ] && absolutepath "${7}")}"
-    ca_salt="${8:+$([ -s "${8}" ] && absolutepath "${8}")}"
+  cert_out="${3:+$(absolutepathidx "$3" "$index")}"
+  cert_out="${3:-$(absolutepathidx "$DC_CERT/cert.pem" "$index")}"
 
-    ca_index="${ca_index:-$(jq -r '.defaultCA // empty' -- "$DC_DB")}"
-    ca_cert_file="${ca_index:+$(get_value_from_ca_index "$ca_index" "cert")}"
-    ca_key_file="${ca_index:+$(get_value_from_ca_index "$ca_index" "key")}"
-    ca_salt="${ca_index:+$(get_value_from_ca_index "$ca_index" "salt")}"
+  ca_index="${4:+$(echo "${4}" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
+  ca_cert_file="${5:+$([ -s "${5}" ] && absolutepath "${5}")}"
+  ca_key_file="${6:+$([ -s "${6}" ] && absolutepath "${6}")}"
+  ca_pass="${7:+$([ -s "${7}" ] && absolutepath "${7}")}"
+  ca_salt="${8:+$([ -s "${8}" ] && absolutepath "${8}")}"
 
-    validity_days="${9:-1}"
+  ca_index="${ca_index:-$(jq -r '.defaultCA // empty' -- "$DC_DB")}"
+  ca_cert_file="${ca_index:+$(get_value_from_ca_index "$ca_index" "cert")}"
+  ca_key_file="${ca_index:+$(get_value_from_ca_index "$ca_index" "key")}"
+  ca_salt="${ca_index:+$(get_value_from_ca_index "$ca_index" "salt")}"
 
-    keep_csr="${10:-false}"
-    keep_cfg="${11:-true}"
+  validity_days="${9:-3}"
 
-    config_file="${12:+$([ -s "${12}" ] && absolutepath "${12}")}"
-    config_file="${index:+$(get_value_from_keys_index "$index" "cfg")}"
+  keep_csr="${10:-false}"
+  keep_cfg="${11:-true}"
 
-    fullchain_out="${13:+$(absolutepathidx "${13}" "$index")}"
-    fullchain_out="${13:-$(absolutepathidx "${DC_CERT}/fullchain.pem" "$index")}"
+  config_file="${12:+$([ -s "${12}" ] && absolutepath "${12}")}"
+  config_file="${index:+$(get_value_from_certs_index "$index" "cfg")}"
 
-    echod "Starting sign_certificate_request with parameters:"
-    echod "      csr_name: $csr_name"
-    echod "      csr_file: $csr_file"
-    echod "   config_file: $config_file"
-    echod "      ca_index: $ca_index"
-    echod "  ca_cert_file: $ca_cert_file"
-    echod "   ca_key_file: $ca_key_file"
-    echod "      cert_out: $cert_out"
-    echod "       ca_pass: $ca_pass"
-    echod " validity_days: $validity_days"
-    echod "      keep_csr: $keep_csr"
-    echod "      keep_cfg: $keep_cfg"
-    echod " fullchain_out: $fullchain_out"
-    echod "          user: $DYSTOPIAN_USER"
+  fullchain_out="${13:+$(absolutepathidx "${13}" "$index")}"
+  fullchain_out="${13:-$(absolutepathidx "${DC_CERT}/fullchain.pem" "$index")}"
 
-    # Try to parse index from csr_file or get csr_file via index
-    if [ -z "$csr_name" ] && [ ! -f "$csr_file" ]; then
-        echoe "Either csr_name or csr_file must be set"
-        return 1
-    fi
+  # Check for default CA if no CA params set
+  [ -z "$ca_index" ] && ca_index="$(find_defaultCA)"
+  [ -n "$ca_index" ] && [ -z "$ca_cert_file" ] && ca_cert_file="$(get_value_from_ca_index "$ca_index" "cert")"
+  [ -n "$ca_index" ] && [ -z "$ca_key_file" ] && ca_key_file="$(get_value_from_ca_index "$ca_index" "key")"
+  [ -n "$ca_pass" ] && [ -z "$ca_salt" ] && ca_salt="$(get_value_from_ca_index "$ca_index" "salt")"
 
-    # Validate certificate output directory
-    cert_dir="$(dirname "$cert_out")"
-    if [ ! -d "$cert_dir" ]; then
-        echov "Creating output directory: $cert_dir"
-        mkdir -p "$cert_dir" || {
-            echoe "Failed to create directory '$cert_dir'"
-            return 1
-        }
-        echov "Output directory created successfully"
-        set_permissions_and_owner "$cert_dir" 750 || {
-            echoe "Failed calling set_permissions_and_owner $cert_dir 750"
-            return 1
-        }
-    fi
+  echod "Starting sign_certificate_request with parameters:"
+  echod "      csr_name: $csr_name"
+  echod "      csr_file: $csr_file"
+  echod "   config_file: $config_file"
+  echod "      ca_index: $ca_index"
+  echod "  ca_cert_file: $ca_cert_file"
+  echod "   ca_key_file: $ca_key_file"
+  echod "      cert_out: $cert_out"
+  echod "       ca_pass: $ca_pass"
+  echod "       ca_salt: $ca_salt"
+  echod " validity_days: $validity_days"
+  echod "      keep_csr: $keep_csr"
+  echod "      keep_cfg: $keep_cfg"
+  echod " fullchain_out: $fullchain_out"
+  echod "          user: $DYSTOPIAN_USER"
 
-    # Show config when running in debug
-    echod "SSL config contents:"
-    echod "$(cat "$config_out" 2>/dev/null || echo "Failed to read $config_out")"
+  echoi "Signing CSR: $csr_file"
 
-    # Sign the CSR
-    echoi "Signing CSR: $csr_file"
-    echod "Using CA certificate: $ca_cert_file"
-    echod "Using CA key: $ca_key_file"
-    echod "Output certificate: $cert_out"
-    echod "Validity: $validity_days days"
+  # Try to parse index from csr_file or get csr_file via index
+  if [ -z "$csr_name" ] && [ ! -f "$csr_file" ]; then
+    echoe "Either csr_name or csr_file must be set"
+    return 1
+  fi
 
-    echod "Calling _create_and_verify_cert $cert_out $csr_file $config_file $ca_key_file $ca_cert_file $ca_pass $ca_salt"
-    _create_and_verify_cert "$cert_out" "$csr_file" "$config_file" "$ca_key_file" \
-        "$ca_cert_file" "$ca_pass" "$ca_salt" "req_ext" 1 || {
-            echoe "Failed signing CSR and creating certificate"
-            return 1
+  # Validate certificate output directory
+  cert_dir="$(dirname -- "$cert_out")"
+  if [ ! -d "$cert_dir" ]; then
+    echov "Creating output directory: $cert_dir"
+    mkdir -p -- "$cert_dir" || {
+      echoe "Failed to create directory '$cert_dir'"
+      return 1
     }
-    echosv "Creating and verifying $cert_out successful"
+    echov "Output directory created successfully"
+    set_permissions_and_owner "$cert_dir" 750 || {
+      echoe "Failed calling set_permissions_and_owner $cert_dir 750"
+      return 1
+    }
+  fi
 
-    add_to_ssl_keys_database "$index" "issuer" "$ca_index"
-    # Store Date
-    add_to_ssl_keys_database "$index" "cert" "$cert_out"
-    created=$(date -Iseconds 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
-    add_to_ssl_keys_database "$index" "created" "$created"
+  # Show config when running in debug
+  echod "SSL config contents:"
+  while read -r line; do
+    echod "$line"
+  done < "$config_file"
+  #echod "$(cat "$config_out" 2>/dev/null || echo "Failed to read $config_out")"
 
-    # Store validity dates
-    valid_from_raw=$(openssl x509 -in "$cert_out" -noout -startdate | sed 's/notBefore=//')
-    valid_until_raw=$(openssl x509 -in "$cert_out" -noout -enddate | sed 's/notAfter=//')
-    valid_from=$(date -u -d "$valid_from_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$valid_from_raw")
-    valid_until=$(date -u -d "$valid_until_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$valid_until_raw")
-    add_to_ssl_keys_database "$index" "valid_from" "$valid_from"
-    add_to_ssl_keys_database "$index" "valid_until" "$valid_until"
+  # Sign the CSR
+  echod "Using CA certificate: $ca_cert_file"
+  echod "Using CA key: $ca_key_file"
+  echod "Output certificate: $cert_out"
+  echod "Validity: $validity_days days"
 
-    # Store serial & fingerprint
-    serial=$(openssl x509 -in "$cert_out" -noout -serial | sed 's/serial=//')
-    add_to_ssl_keys_database "$index" "serial" "$serial"
-    fingerprint=$(openssl x509 -in "$cert_out" -noout -fingerprint | sed 's/SHA1 Fingerprint=//')
-    add_to_ssl_keys_database "$index" "fingerprint" "$fingerprint"
+  echod "Calling _create_and_verify_cert $cert_out $csr_file $config_file $ca_key_file $ca_cert_file $ca_pass $ca_salt"
+  _create_and_verify_cert "$cert_out" "$csr_file" "$config_file" "$ca_key_file" \
+    "$ca_cert_file" "$ca_pass" "$ca_salt" "req_ext" 1 || {
+      echoe "Failed signing CSR and creating certificate"
+      return 1
+  }
+  echosv "Creating and verifying $cert_out successful"
 
-    # Display certificate information
-    echoi "Displaying certificate details"
-    cert_subject=$(openssl x509 -in "$cert_out" -noout -subject | sed 's/subject=//')
-    cert_serial=$(openssl x509 -in "$cert_out" -noout -serial | sed 's/serial=//')
-    echoi "  Subject: $cert_subject"
-    echoi "  Serial:  $cert_serial"
-    openssl x509 -in "$cert_out" -noout -dates | sed 's/^/  /'
+  add_to_ssl_certs "$index" "issuer" "$ca_index"
+  # Store Date
+  add_to_ssl_certs "$index" "cert" "$cert_out"
+  created=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+  add_to_ssl_certs "$index" "created" "$created"
 
-    # Show SAN if present
-    san=$(openssl x509 -in "$cert_out" -noout -ext subjectAltName 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1)
-    if [ -n "$san" ]; then
-        echoi "  SAN: $san"
+  # Store validity dates
+  valid_from_raw=$(openssl x509 -in "$cert_out" -noout -startdate | sed 's/notBefore=//')
+  valid_until_raw=$(openssl x509 -in "$cert_out" -noout -enddate | sed 's/notAfter=//')
+  valid_from=$(date -u -d "$valid_from_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$valid_from_raw")
+  valid_until=$(date -u -d "$valid_until_raw" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "$valid_until_raw")
+  add_to_ssl_certs "$index" "valid_from" "$valid_from"
+  add_to_ssl_certs "$index" "valid_until" "$valid_until"
+
+  # Store serial & fingerprint
+  serial=$(openssl x509 -in "$cert_out" -noout -serial | sed 's/serial=//')
+  add_to_ssl_certs "$index" "serial" "$serial"
+  fingerprint=$(openssl x509 -in "$cert_out" -noout -fingerprint | sed 's/SHA1 Fingerprint=//')
+  add_to_ssl_certs "$index" "fingerprint" "$fingerprint"
+
+  # Display certificate information
+  echoi "Displaying certificate details"
+  echoi "  Subject: $(openssl x509 -in "$cert_out" -noout -subject | sed 's/subject=//')"
+  echoi "  Serial:  $(openssl x509 -in "$cert_out" -noout -serial | sed 's/serial=//')"
+  #openssl x509 -in "$cert_out" -noout -dates | sed 's/^/  /'
+
+  # Show SAN if present
+  san=$(openssl x509 -in "$cert_out" -noout -ext subjectAltName 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1)
+  if [ -n "$san" ]; then
+    echoi "  SAN: $san"
+  fi
+
+  # Create certificate chain if CA certificate is available
+  if _create_and_verify_fullchain "$cert_out" "$fullchain_out"; then
+    echosv "Creating and verifying certificate chain file successful"
+    add_to_ssl_certs "$index" "fullchain" "$fullchain_out"
+  else
+    echow "Calling _create_and_verify_fullchain $cert_out $fullchain_out failed."
+  fi
+
+  # Cleanup CSR and config files based on keep flags
+  echov "Cleaning up temporary files"
+  if [ "$keep_csr" = "false" ]; then
+    file=$(get_value_from_index "$index" "csr")
+    rm -f -- "$file"
+    if ! delete_key_from_index "$index" "csr"; then
+      echoe "Cleaning up after signing failed"
+      return 1
     fi
-
-    # Create certificate chain if CA certificate is available
-    echoi "Creating certificate chain"
-    if _create_and_verify_fullchain "$cert_out" "$fullchain_out"; then
-        echosv "Creating and verifying certificate chain file successful"
-        add_to_ssl_keys_database "$index" "fullchain" "$fullchain_out"
-    else
-        echow "Calling _create_and_verify_fullchain $cert_out $fullchain_out failed."
+  fi
+  if [ "$keep_cfg" = "false" ]; then
+    file=$(get_value_from_index "$index" "cfg")
+    rm -f -- "$file"
+    if ! delete_key_from_index "$index" "cfg"; then
+      echoe "Cleaning up after signing failed"
+      return 1
     fi
+  fi
+  echosv "Cleaning up temporary files succesful"
 
-    # Cleanup CSR and config files based on keep flags
-    echov "Cleaning up temporary files"
-    if [ "$keep_csr" = "false" ]; then
-        file=$(get_value_from_keys_index "$index" "csr")
-        rm -f -- "$file"
-        if ! delete_key_from_keys_index "$index" "csr"; then
-            echoe "Cleaning up after signing failed"
-            return 1
-        fi
-    fi
-    if [ "$keep_cfg" = "false" ]; then
-        file=$(get_value_from_keys_index "$index" "cfg")
-        rm -f -- "$file"
-        if ! delete_key_from_keys_index "$index" "cfg"; then
-            echoe "Cleaning up after signing failed"
-            return 1
-        fi
-    fi
-    echosv "Cleaning up temporary files succesful"
-
-    echos "Certificate creation & signing successful"
-    return 0
+  echos "Certificate creation & signing successful"
+  return 0
 }
 
 
@@ -1385,7 +1431,7 @@ create_cert_chain() {
   # Create output directory if it doesn't exist
   chain_dir="$(dirname "$chain_outfile")"
   if [ ! -d "$chain_dir" ]; then
-    mkdir -p "$chain_dir" || {
+    mkdir -p -- "$chain_dir" || {
       echoe "Failed to create directory '$chain_dir'"
       return 1
     }
@@ -1423,8 +1469,8 @@ create_cert_chain() {
 
   # Add to index if index parameter provided
   if [ -n "$index" ]; then
-    add_to_ssl_keys_database "$index" "fullchain" "$chain_outfile" || {
-        echow "Warning: Failed to add chain file to index"
+    add_to_ssl_certs "$index" "fullchain" "$chain_outfile" || {
+      echow "Warning: Failed to add chain file to index"
     }
   fi
 
@@ -1479,7 +1525,7 @@ create_certificate_revocation_list() {
   # Create CRL output directory if it doesn't exist
   crl_dir="$(dirname "$crl_outfile")"
   if [ ! -d "$crl_dir" ]; then
-    mkdir -p "$crl_dir" || {
+    mkdir -p -- "$crl_dir" || {
       echoe "Failed to create directory '$crl_dir'"
       return 1
     }
@@ -1498,9 +1544,8 @@ create_certificate_revocation_list() {
   if [ -f "$crl_outfile" ]; then
     echo "CRL file already exists. Changing name to... "
     crl_outfile="${crl_outfile%.*}-${RAND}.${crl_outfile##*.}"
-    basename "$crl_outfile"
+    basename -- "$crl_outfile"
   fi
-
 
   # First check if config already exists in index
   config_file=$(get_value_from_index "$ca_index" "cfg")
@@ -1512,28 +1557,28 @@ create_certificate_revocation_list() {
   fi
 
   # In case user wants to keep cfg file after CRL generation
-  if [ -n "$config_file" ] && [ -f "$config_file" ]; then
-    echo "Config file already exists. Backing up old one..."
-    backup_and_rename "cfg" "$ca_index" "$config_file" || {
-      echoe "Failed to backup existing config file"
-      return 1
-    }
-  fi
+  # if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+  #  echo "Config file already exists. Backing up old one..."
+  #  backup_and_rename "cfg" "$ca_index" "$config_file" || {
+  #    echoe "Failed to backup existing config file"
+  #    return 1
+  #  }
+  # fi
 
-  add_to_ssl_keys_database "$ca_index" "cfg" "$config_file"
+  add_to_ssl_certs "$ca_index" "cfg" "$config_file"
 
   # Initialize OpenSSL CA database files if they don't exist
   index_txt="$DC_DIR/index.txt"
   crlnumber_file="$DC_DIR/crlnumber"
 
   if [ ! -f "$index_txt" ]; then
-    touch "$index_txt"
-    chmod 600 "$index_txt"
+    touch -- "$index_txt"
+    chmod -- 600 "$index_txt"
   fi
 
   if [ ! -f "$crlnumber_file" ]; then
     echo "01" > "$crlnumber_file"
-    chmod 600 "$crlnumber_file"
+    chmod -- 600 "$crlnumber_file"
   fi
 
 
@@ -1565,23 +1610,25 @@ create_certificate_revocation_list() {
 
       # Generate derived key for decryption
       _create_argon2id_derived_key_pw "$ca_pass_content" "$salt_file" | \
-        openssl ca -gencrl \
-          -keyfile "$ca_key_file" \
-          -cert "$ca_cert_file" \
-          -out "$crl_outfile" \
-          -config "$config_file" \
-          -passin "stdin" 2>/dev/null || {
+        openssl ca \
+                -gencrl \
+                -keyfile "$ca_key_file" \
+                -cert "$ca_cert_file" \
+                -out "$crl_outfile" \
+                -config "$config_file" \
+                -passin "stdin" 2>/dev/null || {
         echoe "Failed to generate CRL with encrypted key"
         rm -f -- "$config_file"
         return 1
       }
     else
       # Generate CRL without password
-      openssl ca -gencrl \
-        -keyfile "$ca_key_file" \
-        -cert "$ca_cert_file" \
-        -out "$crl_outfile" \
-        -config "$config_file" 2>/dev/null || {
+      openssl ca \
+              -gencrl \
+              -keyfile "$ca_key_file" \
+              -cert "$ca_cert_file" \
+              -out "$crl_outfile" \
+              -config "$config_file" 2>/dev/null || {
         echoe "Failed to generate CRL"
         rm -f -- "$config_file"
         return 1
@@ -1591,13 +1638,13 @@ create_certificate_revocation_list() {
     # Set permissions
 
     # Add CRL to index
-    add_to_ssl_keys_database "$ca_index" "crl" "$crl_outfile"
+    add_to_ssl_certs "$ca_index" "crl" "$crl_outfile"
 
     # Verify the generated CRL
     if openssl crl -in "$crl_outfile" -noout -text >/dev/null 2>&1; then
-        echo "✓ CRL generated and verified successfully"
+      echo "✓ CRL generated and verified successfully"
     else
-        echo "Warning: CRL was generated but verification failed"
+      echo "Warning: CRL was generated but verification failed"
     fi
 
     # Display CRL information
@@ -1621,279 +1668,294 @@ create_certificate_revocation_list() {
 
 
 _revoke_certificate() {
-    cert_file="$1"
-    ca_key_file="$2"
-    ca_cert_file="$3"
-    pass="$4"
-    salt="$5"
-    reason="$6"
+  cert_file="$1"
+  ca_key_file="$2"
+  ca_cert_file="$3"
+  pass="$4"
+  salt="$5"
+  reason="$6"
 
-    # Check for default CA in index.json if CA files not provided
-    if [ -z "$ca_cert_file" ] || [ -z "$ca_key_file" ]; then
-        default_ca=$(jq -r '.defaultCA // empty' -- "$DC_DB")
-        if [ -n "$default_ca" ] && [ "$default_ca" != "null" ]; then
-            echov "Using default CA: $default_ca"
-            ca_cert_file="${ca_cert_file:-$(get_storage "ca" "$default_ca" | jq -r '.cert // empty')}"
-            ca_key_file="${ca_key_file:-$(get_storage "ca" "$default_ca" | jq -r '.key // empty')}"
-        fi
+  # Check for default CA in index.json if CA files not provided
+  if [ -z "$ca_cert_file" ] || [ -z "$ca_key_file" ]; then
+    default_ca=$(jq -r '.defaultCA // empty' -- "$DC_DB")
+    if [ -n "$default_ca" ] && [ "$default_ca" != "null" ]; then
+      echov "Using default CA: $default_ca"
+      ca_cert_file="${ca_cert_file:-$(get_storage "ca" "$default_ca" | jq -r '.cert // empty')}"
+      ca_key_file="${ca_key_file:-$(get_storage "ca" "$default_ca" | jq -r '.key // empty')}"
     fi
+  fi
 
-    # Set defaults
-    ca_key_file="${ca_key_file:-$(absolutepath "$DC_CA/ca-key.pem")}"
-    ca_cert_file="${ca_cert_file:-$(absolutepath "$DC_CA/ca.pem")}"
+  # Set defaults
+  ca_key_file="${ca_key_file:-$(absolutepath "$DC_CA/ca-key.pem")}"
+  ca_cert_file="${ca_cert_file:-$(absolutepath "$DC_CA/ca.pem")}"
 
-    # Find CA index and config
-    ca_index=$(find_name_by_key_value "cert" "$ca_cert_file")
-    if [ -z "$ca_index" ]; then
-        ca_index=$(find_name_by_key_value "key" "$ca_key_file")
-    fi
+  # Find CA index and config
+  ca_index=$(find_name_by_key_value "cert" "$ca_cert_file")
+  if [ -z "$ca_index" ]; then
+    ca_index=$(find_name_by_key_value "key" "$ca_key_file")
+  fi
 
-    # Look for existing config files
-    config_file=$(get_value_from_index "$ca_index" "cfg")
+  # Look for existing config files
+  config_file=$(get_value_from_index "$ca_index" "cfg")
 
-    if [ -z "$config_file" ] || [ ! -f "$config_file" ]; then
-        echoe "No CA config file found for revocation"
-        echo "Run create-crl first to generate the necessary config"
-        return 1
-    fi
-
-    (
-        if [ -n "$pass" ] && [ "$no_argon" = "false" ]; then
-            # Generate derived key for decryption
-            echod "Calling _create_argon2id_derived_key_pw pass salt | openssl ca ..."
-            _create_argon2id_derived_key_pw "$pass" "$salt" | \
-            openssl ca \
-                    -revoke "$cert_file" \
-                    -keyfile "$ca_key_file" \
-                    -cert "$ca_cert_file" \
-                    -config "$config_file" \
-                    -crl_reason "$reason" \
-                    -passin "stdin" 2>/dev/null || {
-                echoe "Failed to revoke certificate (with encrypted key)"
-                return 1
-            }
-        elif [ -n "$pass" ] && [ "$no_argon" = "true" ]; then
-            echod "Calling _create_pbkdf2_derived_key_pw pass salt | openssl ca ..."
-            _create_pbkdf2_derived_key_pw "$pass" | \
-            openssl ca \
-                    -revoke "$cert_file" \
-                    -keyfile "$ca_key_file" \
-                    -cert "$ca_cert_file" \
-                    -config "$config_file" \
-                    -crl_reason "$reason" \
-                    -passin "stdin" 2>/dev/null || {
-                echoe "Failed to revoke certificate (with encrypted key)"
-                return 1
-            }
-        else
-            # Revoke certificate without password
-            echod "Calling openssl ca ..."
-            openssl ca \
-                -revoke "$cert_file" \
-                -keyfile "$ca_key_file" \
-                -cert "$ca_cert_file" \
-                -config "$config_file" \
-                -crl_reason "$reason" 2>/dev/null || {
-                echoe "Failed to revoke certificate"
-                return 1
-            }
-        fi
-        return 0
-    )
-    status=$?
-    echod "Subshell for certificate revocation exited with status: $status"
-    if [ "$status" -eq 0 ]; then
-        return 0
-    fi
+  if [ -z "$config_file" ] || [ ! -f "$config_file" ]; then
+    echoe "No CA config file found for revocation"
+    echo "Run create-crl first to generate the necessary config"
     return 1
-}
+  fi
 
-verify_certificate() {
-    cert_file="$1"
-    ca_cert="$2"
-    check_expiry="$3"
-
-    # Validate input files exist
-    if [ ! -f "$cert_file" ]; then
-        echoe "Certificate file '$cert_file' does not exist"
+  (
+    if [ -n "$pass" ] && [ "$no_argon" = "false" ]; then
+      # Generate derived key for decryption
+      echod "Calling _create_argon2id_derived_key_pw pass salt | openssl ca ..."
+      _create_argon2id_derived_key_pw "$pass" "$salt" | \
+      openssl ca \
+              -revoke "$cert_file" \
+              -keyfile "$ca_key_file" \
+              -cert "$ca_cert_file" \
+              -config "$config_file" \
+              -crl_reason "$reason" \
+              -passin "stdin" 2>/dev/null || {
+        echoe "Failed to revoke certificate (with encrypted key)"
         return 1
-    fi
-
-    if [ ! -f "$ca_cert" ]; then
-        echoe "CA certificate file '$ca_cert' does not exist"
-        return 1
-    fi
-
-    # Validate files are actually certificates
-    if ! openssl x509 -in "$cert_file" -noout -text >/dev/null 2>&1; then
-        echoe "'$cert_file' is not a valid certificate"
-        return 1
-    fi
-
-    if ! openssl x509 -in "$ca_cert" -noout -text >/dev/null 2>&1; then
-        echoe "'$ca_cert' is not a valid CA certificate"
-        return 1
-    fi
-
-    # Get certificate details for reporting
-    cert_subject=$(openssl x509 -in "$cert_file" -noout -subject | sed 's/subject=//')
-    cert_issuer=$(openssl x509 -in "$cert_file" -noout -issuer | sed 's/issuer=//')
-    ca_subject=$(openssl x509 -in "$ca_cert" -noout -subject | sed 's/subject=//')
-
-    # Check if certificate is expired or will expire soon
-    if [ "$check_expiry" = "true" ]; then
-        if ! openssl x509 -in "$cert_file" -noout -checkend 0 >/dev/null 2>&1; then
-            echow "Certificate '$cert_file' has expired"
-        elif ! openssl x509 -in "$cert_file" -noout -checkend 2592000 >/dev/null 2>&1; then
-            echow "Certificate '$cert_file' expires within 30 days"
-        fi
-    fi
-
-    # Verify certificate chain
-    verification_output=$(openssl verify -CAfile "$ca_cert" "$cert_file" 2>&1)
-    verification_result=$?
-
-    if [ $verification_result -eq 0 ]; then
-        echosv "Certificate verification successful: $cert_file"
-
-        echov ""
-        echov "Certificate Details:"
-        echov "  Subject: $cert_subject"
-        echov "  Issuer:  $cert_issuer"
-        echov "  CA Subject: $ca_subject"
-        echov ""
-
-        # Show validity dates
-        echov "Validity Period:"
-        openssl x509 -in "$cert_file" -noout -dates | sed 's/^/  /'
-        echov ""
-
-        # Show SAN if present
-        san=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1)
-        if [ -n "$san" ]; then
-            echov "Subject Alternative Names:"
-            echov "  $san"
-            echov ""
-        fi
-
-        # Show key usage
-        key_usage=$(openssl x509 -in "$cert_file" -noout -ext keyUsage 2>/dev/null | grep -A1 "Key Usage" | tail -n1)
-        if [ -n "$key_usage" ]; then
-            echov "Key Usage:"
-            echov "  $key_usage"
-            echov ""
-        fi
-
-        # Show extended key usage
-        ext_key_usage=$(openssl x509 -in "$cert_file" -noout -ext extendedKeyUsage 2>/dev/null | grep -A1 "Extended Key Usage" | tail -n1)
-        if [ -n "$ext_key_usage" ]; then
-            echov "Extended Key Usage:"
-            echov "  $ext_key_usage"
-            echov ""
-        fi
-
+      }
+    elif [ -n "$pass" ] && [ "$no_argon" = "true" ]; then
+      echod "Calling _create_pbkdf2_derived_key_pw pass salt | openssl ca ..."
+      _create_pbkdf2_derived_key_pw "$pass" | \
+      openssl ca \
+              -revoke "$cert_file" \
+              -keyfile "$ca_key_file" \
+              -cert "$ca_cert_file" \
+              -config "$config_file" \
+              -crl_reason "$reason" \
+              -passin "stdin" 2>/dev/null || {
+          echoe "Failed to revoke certificate (with encrypted key)"
+          return 1
+        }
     else
-        echow "Certificate verification failed: $cert_file"
-        echow "Error details: $verification_output"
-
-        # Try to provide more specific error information
-        if echow "$verification_output" | grep -q "certificate signature failure"; then
-            echow "The certificate was not signed by the provided CA"
-        elif echow "$verification_output" | grep -q "certificate has expired"; then
-            echow "The certificate has expired"
-        elif echow "$verification_output" | grep -q "certificate is not yet valid"; then
-            echow "The certificate is not yet valid (future date)"
-        fi
-
-        echov ""
-        echowv "Certificate Subject: $cert_subject"
-        echowv "Certificate Issuer:  $cert_issuer"
-        echowv "CA Subject:          $ca_subject"
+      # Revoke certificate without password
+      echod "Calling openssl ca ..."
+      openssl ca \
+              -revoke "$cert_file" \
+              -keyfile "$ca_key_file" \
+              -cert "$ca_cert_file" \
+              -config "$config_file" \
+              -crl_reason "$reason" 2>/dev/null || {
+        echoe "Failed to revoke certificate"
+        return 1
+      }
     fi
+    return 0
+  )
+  status=$?
+  echod "Subshell for certificate revocation exited with status: $status"
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  return 1
 }
 
 
-# TODO: Finish SSL encrypt and decrypt functions
+verify_certificate_or_key() {
+  cert_file="$1"
+  ca_cert="$2"
+  check_expiry="$3"
+
+  # Validate input files exist
+  if [ ! -f "$cert_file" ]; then
+    echoe "Certificate file '$cert_file' does not exist"
+    return 1
+  fi
+
+  if [ ! -f "$ca_cert" ]; then
+    cert_index="$(find_certs_index_by_key_value "cert" "$cert_file")"
+    ca_index="$(get_value_from_certs_index "$cert_index" "issuer")"
+    ca_cert="$(get_value_from_ca_index "$ca_index" "cert")"
+    [ -z "$ca_cert" ] && echoe "No CA certificate found" && return 1
+  fi
+
+  # Validate files are actually certificates
+  echod "Calling openssl x509 -in \"$cert_file\" -noout -text"
+  if ! openssl x509 -in "$cert_file" -noout -text >/dev/null 2>&1; then
+    echoe "'$cert_file' is not a valid certificate"
+    return 1
+  fi
+
+  if ! openssl x509 -in "$ca_cert" -noout -text >/dev/null 2>&1; then
+    echoe "'$ca_cert' is not a valid CA certificate"
+    return 1
+  fi
+
+  # Get certificate details for reporting
+  cert_subject=$(openssl x509 -in "$cert_file" -noout -subject | sed 's/subject=//')
+  cert_issuer=$(openssl x509 -in "$cert_file" -noout -issuer | sed 's/issuer=//')
+  ca_subject=$(openssl x509 -in "$ca_cert" -noout -subject | sed 's/subject=//')
+
+  # Check if certificate is expired or will expire soon
+  if [ "$check_expiry" = "true" ]; then
+    if ! openssl x509 -in "$cert_file" -noout -checkend 0 >/dev/null 2>&1; then
+      echow "Certificate '$cert_file' has expired"
+    elif ! openssl x509 -in "$cert_file" -noout -checkend 2592000 >/dev/null 2>&1; then
+      echow "Certificate '$cert_file' expires within 30 days"
+    fi
+  fi
+
+  # Verify certificate chain
+  verification_output=$(openssl verify -CAfile "$ca_cert" "$cert_file" 2>&1)
+
+  if [ $? -eq 0 ]; then
+    echosv "Certificate verification successful: $cert_file"
+
+    echov "Certificate Details:"
+    echov "    Subject: $cert_subject"
+    echov "    Issuer:  $cert_issuer"
+    echov "    CA Subject: $ca_subject"
+
+    # Show validity dates
+    valid_from_raw=$(openssl x509 -in "$cert_file" -noout -startdate | sed 's/notBefore=//')
+    valid_until_raw=$(openssl x509 -in "$cert_file" -noout -enddate | sed 's/notAfter=//')
+    echov ""
+    echov "Validity Period:"
+    echov "    not before: $valid_from_raw"
+    echov "    not after: $valid_until_raw"
+
+    # Show SAN if present
+    san=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1)
+    if [ -n "$san" ]; then
+      echov ""
+      echov "Subject Alternative Names:"
+      echov "  $san"
+    fi
+
+    # Show key usage
+    key_usage=$(openssl x509 -in "$cert_file" -noout -ext keyUsage 2>/dev/null | grep -A1 "Key Usage" | tail -n1)
+    if [ -n "$key_usage" ]; then
+      echov ""
+      echov "Key Usage:"
+      echov "$key_usage"
+    fi
+
+    # Show extended key usage
+    ext_key_usage=$(openssl x509 -in "$cert_file" -noout -ext extendedKeyUsage 2>/dev/null | grep -A1 "Extended Key Usage" | tail -n1)
+    if [ -n "$ext_key_usage" ]; then
+      echov ""
+      echov "Extended Key Usage:"
+      echov "$ext_key_usage"
+    fi
+
+  else
+    echow "Certificate verification failed: $cert_file"
+    echow "Error details: $verification_output"
+
+    # Try to provide more specific error information
+    if echow "$verification_output" | grep -q "certificate signature failure"; then
+      echow "The certificate was not signed by the provided CA"
+    elif echow "$verification_output" | grep -q "certificate has expired"; then
+      echow "The certificate has expired"
+    elif echow "$verification_output" | grep -q "certificate is not yet valid"; then
+      echow "The certificate is not yet valid (future date)"
+    fi
+
+    echov ""
+    echowv "Certificate Subject: $cert_subject"
+    echowv "Certificate Issuer:  $cert_issuer"
+    echowv "CA Subject:          $ca_subject"
+  fi
+}
+
+
 ssl_encrypt() (
-    input="$1"
-    output="${2:-stdout}"
+  input="$1"
+  output="${2:-stdout}"
+
+  if [ -z "$input" ]; then
+    echoe "Input is missing."
+    return 1
+  fi
+
+  if [ -z "$3" ]; then
+    exec 3<&0
+    while IFS= read -r line <&3; do
+      password="$line"
+    done
+    # Close FD 3
+    exec 3<&-
+  else
     password="$3"
-    asymmetric="${4:-false}"
+  fi
+  asymmetric="${4:-false}"
 
-    if [ -f "$input" ]; then
-        input="$(cat "$input")"
-    elif [ -z "$input" ]; then
-        echoe "Input is missing."
-        return 1
+  echod "Starting ssl_encrypt with parameters:"
+  echod "      input: $input"
+  echod "     output: $output"
+  echod "   password: $([ -n "$password" ] && [ ! -f "$password" ] && echo "[SET]")"
+  echod " asymmetric: $asymmetric"
 
+  if [ "$asymmetric" = "false" ]; then
+    # --- Symmetric Encryption ---
+    if [ -z "$password" ]; then
+      echoe "--password is required for asymmetric encryption (--asymmetric)."
+      return 1
     fi
 
-    if [ "$asymmetric" = "false" ]; then
-        # --- Symmetric Encryption ---
-        if [ -z "$password" ]; then
-            echoe "--password is required for asymmetric encryption (--asymmetric)."
-            return 1
-        fi
+    # 1. Generate a cryptographically secure random salt.
+    salt=$(openssl rand -hex 16)
+    if [ -z "$salt" ]; then
+      echoe "Failed to generate a salt for encryption."
+      return 1
+    fi
 
-        # 1. Generate a cryptographically secure random salt.
-        salt=$(openssl rand -hex 16)
-        if [ -z "$salt" ]; then
-            echoe "Failed to generate a salt for encryption."
-            return 1
-        fi
-
-        # 2. Encrypt the data to a temporary file, piping the derived key directly.
-        echo "Info: Performing asymmetric encryption."
-        if ! { _create_argon2id_derived_key_pw "$password" "$salt" | openssl aes-256-cbc -e -pbkdf2 -in "$input" -out "$output" -password stdin; }; then
-            echoe "Symmetric encryption failed. This could be a KDF or an OpenSSL error."
-            return 1
-        fi
-
-        # 3. Combine salt and ciphertext into the final output file.
-        printf "%s" "$salt" > "$chain_out"
-
+    if [ "$output" = "stdout" ]; then
+      echod "Calling _create_argon2id_derived_key_pw \"$password\" \"$salt\" | openssl enc aes-256-cbc -e -pbkdf2 -in \"$input\" -pass stdin"
+      _create_argon2id_derived_key_pw "$password" "$salt" | openssl enc aes-256-cbc -pbkdf2 -in "$input" -pass stdin;
     else
-
-        if [ -n "$password" ]; then
-             echowv "Warning: --password is ignored for symmetric encryption."
-        fi
-
-        if [ -z "$cert_file" ]; then
-
-            default_ca_cert=$(jq -r '.ssl.ca[] | select(.default == true) | .cert' "$DCRYPTO_IDX" 2>/dev/null)
-            if [ -z "$default_ca_cert" ]; then
-                echoe "--cert was not specified and no default CA was found."
-                echoe "Use --cert <file> or set a default CA with the 'set-default-ca' command."
-                return 1
-            fi
-            echov "Info: Using default CA certificate: $default_ca_cert"
-            cert_file="$default_ca_cert"
-        fi
-
-        if [ ! -f "$cert_file" ] || [ ! -f "$input" ]; then
-            echoe "Certificate or input file not found."
-            return 1
-        fi
-
-        if ! openssl pkeyutl -encrypt -pubin -inkey "$cert_file" -in "$input" -out "$chain_out"; then
-            echoe "Asymmetric encryption failed."
-            return 1
-        fi
+      _create_argon2id_derived_key_pw "$password" "$salt" | openssl enc aes-256-cbc -pbkdf2 -in "$input" -pass stdin -out "$output";
     fi
+  else
+    if [ -n "$password" ]; then
+         echowv "Warning: --password is ignored for symmetric encryption."
+    fi
+
+    if [ -z "$cert_file" ]; then
+      default_ca_cert=$(find_defaultCA)
+      if [ -z "$default_ca_cert" ]; then
+        echoe "--cert was not specified and no default CA was found."
+        echoe "Use --cert <file> or set a default CA with the 'set-default-ca' command."
+        return 1
+      fi
+      echov "Info: Using default CA certificate: $default_ca_cert"
+      cert_file="$default_ca_cert"
+    fi
+
+    if [ ! -f "$cert_file" ] || [ ! -f "$input" ]; then
+      echoe "Certificate or input file not found."
+      return 1
+    fi
+
+    if ! openssl pkeyutl -encrypt -pubin -inkey "$cert_file" -in "$input" -out "$chain_out"; then
+      echoe "Asymmetric encryption failed."
+      return 1
+    fi
+  fi
 )
 
 
 ssl_decrypt() (
-    key_file="$1"
-    input="$2"
-    output="$3"
-    password="$4"
-    asymmetric="$5"
+    input="${1:-stdin}"
+    output="${2:-stdout}"
 
-    if [ -z "$input" ] || [ -z "$chain_out" ]; then
-        echoe "--in and --out are required for decrypt"
-        exit 1
+    if [ -z "$3" ]; then
+      exec 3<&0
+      while IFS= read -r line <&3; do
+          password="$line"
+      done
+      # Close FD 3
+      exec 3<&-
+    else
+      password="$3"
     fi
+
+    asymmetric="$4"
 
     if [ "$asymmetric" = "false" ]; then
         # --- Symmetric Decryption ---
@@ -1909,19 +1971,13 @@ ssl_decrypt() (
             return 1
         fi
 
-        # 2. Decrypt, piping the derived key from the KDF directly to OpenSSL.
-        if ! { _create_argon2id_derived_key_pw "$password" "$salt" | openssl enc -d -aes-256-cbc -pbkdf2 -in "" -out "$chain_out" -password stdin; }; then
-            echoe "Symmetric decryption failed. Check your password. This could also be a KDF or an OpenSSL error."
-            return 1
-        fi
-
     else
         if [ -z "$key_file" ]; then
             if ! command -v jq >/dev/null; then
                 echoe "'jq' is not installed. It is required to find the default CA."
                 return 1
             fi
-            default_ca_key=$(jq -r '.ssl.ca[] | select(.default == true) | .key_path' "$DCRYPTO_IDX" 2>/dev/null)
+            default_ca_key=$(find_defaultCA)
             if [ -z "$default_ca_key" ]; then
                 echoe "--key was not specified and no default CA was found."
                 echoe "Use --key <file> or set a default CA with the 'set-default-ca' command."
@@ -1955,117 +2011,274 @@ ssl_decrypt() (
     fi
 )
 
+export_ssl() {
+  cwd=$(pwd)
+  name="$1"
 
+  if [ -n "$index" ]; then
+    index="$2"
+  elif [ -n "$name" ]; then
+    index=$(echo "$name" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")
+  fi
+
+  output=$3
+  output="${output:-$(dirname "$cwd")}"
+
+  echod "Starting export_ssl with parameters:"
+  echod "   name: $name"
+  echod "  index: $index"
+  echod " output: $output"
+
+  if [ -z "$name" ] && [ -z "$index" ]; then
+    echoe "One of --name / --index has to be set"
+    return 1
+  fi
+
+  echoi "Exporting SSL Cert & Keys $index"
+  tmpdb=$(mktemps)
+  tmpdb2=$(mktemps)
+
+  echod "Check if export directory exists..."
+  if [ ! -d "$output/$index" ]; then
+    mkdir -p -- "$output/$index" || {
+      echoe "Failed creating export directory"
+      return 1
+    }
+  fi
+
+  get_value_from_index "$index" > "$tmpdb"
+  keypath=$(jq -r ".key" -- "$tmpdb")
+  certpath=$(jq -r ".cert" -- "$tmpdb")
+  saltpath=$(jq -r ".salt" -- "$tmpdb")
+
+  key=$(basename -- "$keypath")
+  cert=$(basename -- "$certpath")
+  salt=$(basename -- "$saltpath")
+
+  jq -e --arg key "$key" \
+        --arg crt "$cert" \
+        --arg slt "$salt" \
+        '.key = $key | .cert = $crt | .salt = $slt' "$tmpdb" > "$tmpdb2" || {
+          echoe "Fa"
+          return 1
+        }
+
+  mv -- "$tmpdb2" "$output/$index/$index.json" || {
+    echoe "Failed overwriting json database"
+    rm -f -- "$tmpdb2" "$tmpdb"
+    return 1
+  }
+
+  if cp -- "$keypath" "$output/$index/$key"; then
+    set_permissions_and_owner "$output/$index/$key" 400
+  else
+    echoe "Failed copying $keypath to $output/$index/$key"
+    return 1
+  fi
+
+  if cp -- "$certpath" "$output/$index/$cert"; then
+    set_permissions_and_owner "$output/$index/$cert" 400
+  else
+    echoe "Failed copying $certpath to $output/$index/$cert"
+    return 1
+  fi
+
+  if cp -- "$saltpath" "$output/$index/$salt"; then
+    set_permissions_and_owner "$output/$index/$salt" 400
+  else
+    echoe "Failed copying $saltpath to $output/$index/$salt"
+    return 1
+  fi
+
+  echos "Exporting SSL Cert & Keys successful"
+
+}
 
 import_ssl() {
-    name="${1:-}"
-    index="${name:+$(echo "$name" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
+  import="${1:+$(absolutepath "$1")}"
+  index="${import:+$(basename -- "$import")}"
+  copy_files="${2:-true}"
+  move_files="${3:-false}"
+  set_as_default="${4:-false}"
+  set_as_defaultRoot="${5:-false}"
 
-    import="${2:+$(absolutepath "$2")}"
-    scan_depth="${3:-1}"
-    copy_files="${4:-true}"
-    move_files="${5:-false}"
+  : "${filecount:=0}"
 
-    echod "Starting import_ssl with parameters:"
-    echod "           import: $import"
-    echod "       scan_depth: $scan_depth"
-    echod "       copy_files: $copy_files"
-    echod "       move_files: $move_files"
-    echod "             user: $DYSTOPIAN_USER"
+  echod "Starting import_ssl with parameters:"
+  echod "     import: $import"
+  echod "      index: $index"
+  echod " copy_files: $copy_files"
+  echod " move_files: $move_files"
+  echod "       user: $DYSTOPIAN_USER"
 
-    : "${filecount:=0}"
+  if [ ! -d "$import" ]; then
+    echoe "Import dir doesn't exist: $import"
+    return 1
+  fi
 
-    if [ -z "$index" ]; then
-        echow "Index must be set for import files. Falling back to random value."
-        index="$RAND"
-    fi
+  if [ "$copy_files" = "true" ] && [ "$move_files" = "true" ]; then
+    echoe "--copy-files and --move-files can't be set both as parameter"
+    return 1
+  fi
 
-    if [ "$copy_files" = "true" ] && [ "$move_files" = "true" ]; then
-        echoe "--copy-files and --move-files can't be set both as parameter"
+  echoi "Importing SSL Cert & Keys $index"
+  tmpdir=$(mktemp -d -- "/tmp/XXXXXX")
+  tmpdb=$(mktemp -- "$tmpdir/XXXXXX.json")
+
+  # Read fields from input JSON
+  key=$(jq -r '.key // empty' -- "$import/$index.json")
+  cert=$(jq -r '.cert // empty' -- "$import/$index.json")
+  salt=$(jq -r '.salt // empty' -- "$import/$index.json")
+  type=$(jq -r '.type // empty' -- "$import/$index.json")
+
+  [ "$type" = "root" ] && type="rootCAs"
+  [ "$type" = "intermediate" ] && type="intermediateCAs"
+
+  # Check if input JSON is valid
+  if ! jq -e . "$import/$index.json" >/dev/null 2>&1; then
+    echoe "Error: Invalid JSON in $import/$index.json"
+    rm -rf -- "$tmpdir"
+    return 1
+  fi
+
+  # Validate required fields
+  if [ -z "$key" ] || [ -z "$cert" ]; then
+    echoe "Error: Missing key or cert in $import/$index.json"
+    rm -rf -- "$tmpdir"
+    return 1
+  fi
+
+  # Handle salt: set to null for jq if empty or "null"
+  if [ -z "$salt" ] || [ "$salt" = "null" ]; then
+    salt_path="null"
+  else
+    salt_path="/etc/dystopian-crypto/ca/private/$salt"
+  fi
+
+  # Construct paths based on type
+  if [ -z "$type" ]; then
+    key_path="/etc/dystopian-crypto/cert/private/$key"
+    cert_path="/etc/dystopian-crypto/cert/$cert"
+    [ "$salt_path" != "null" ] && salt_path="/etc/dystopian-crypto/cert/private/$salt"
+    target_key_dir="/etc/dystopian-crypto/cert/private"
+    target_cert_dir="/etc/dystopian-crypto/cert"
+    target_salt_dir="/etc/dystopian-crypto/cert/private"
+    jq_target=".ssl.certs"
+  elif [ "$type" = "root" ] || [ "$type" = "intermediate" ]; then
+    key_path="/etc/dystopian-crypto/ca/private/$key"
+    cert_path="/etc/dystopian-crypto/ca/$cert"
+    [ "$salt_path" != "null" ] && salt_path="/etc/dystopian-crypto/ca/private/$salt"
+    target_key_dir="/etc/dystopian-crypto/ca/private"
+    target_cert_dir="/etc/dystopian-crypto/ca"
+    target_salt_dir="/etc/dystopian-crypto/ca/private"
+    [ "$type" = "root" ] && jq_target=".ssl.rootCAs"
+    [ "$type" = "intermediate" ] && jq_target=".ssl.intermediateCAs"
+
+  else
+    echoe "Error: Invalid type '$type' in $import/$index.json"
+    rm -rf -- "$tmpdir"
+    return 1
+  fi
+
+  # Check if index already exists in the database
+  if jq -e "${jq_target}.\"$index\"" -- "$DC_DB" >/dev/null 2>&1; then
+    echoe "Error: Entry $index already exists in ${jq_target}"
+    rm -rf -- "$tmpdir"
+    return 1
+  fi
+
+  # Copy or move files
+  filecount=0
+  for file in "$key" "$cert" ${salt_path:+"$salt"}; do
+    if [ -n "$file" ] && [ "$file" != "null" ]; then
+      src_file="$import/$file"
+      if [ -f "$src_file" ]; then
+        # Determine target directory based on file type
+        case "$file" in
+          "$key")  target_dir="$target_key_dir" ;;
+          "$cert") target_dir="$target_cert_dir" ;;
+          "$salt") target_dir="$target_salt_dir" ;;
+        esac
+        # Create target directory if it doesn't exist
+        mkdir -p -- "$target_dir" || {
+          echoe "Error: Failed to create directory $target_dir"
+          rm -rf -- "$tmpdir"
+          return 1
+        }
+        # Copy or move the file
+        if [ "$move_files" = "true" ]; then
+          if mv -f -- "$src_file" "$target_dir/"; then
+            ((filecount++))
+            echod "Moved file: $src_file to $target_dir/$file"
+          else
+            echoe "Error: Failed to move $src_file to $target_dir/$file"
+            rm -rf -- "$tmpdir"
+            return 1
+          fi
+        elif [ "$copy_files" = "true" ]; then
+          if cp -f "$src_file" "$target_dir/"; then
+            ((filecount++))
+            echod "Copied file: $src_file to $target_dir/$file"
+          else
+            echoe "Error: Failed to copy $src_file to $target_dir/$file"
+            rm -rf -- "$tmpdir"
+            return 1
+          fi
+        fi
+      else
+        echoe "Error: File $src_file does not exist"
+        rm -rf -- "$tmpdir"
         return 1
+      fi
     fi
+  done
 
-    if [ ! -f "$import" ] && [ ! -d "$import" ]; then
-        echoe "--import must be either a directory or file"
-        return 1
-    fi
+  # Update JSON based on type
+  jq -e \
+     --arg idx "$index" \
+     --arg key "$key_path" \
+     --arg crt "$cert_path" \
+     --arg slt "$salt_path" \
+     --arg typ "$type" \
+     --slurpfile imp "$import/$index.json" \
+    '.ssl[$typ][$idx] = $imp[0] |
+     .ssl[$typ][$idx].key = $key |
+     .ssl[$typ][$idx].cert = $crt |
+     ((type == "string") and (length > 0) and ($slt != "null") | .ssl[$typ][$idx].salt = $slt)
+    ' -- "$DC_DB" > "$tmpdb" || {
+      echoe "Database file operations failed"
+      return 1
+    }
 
-    if [ -f "$import" ]; then
-        echod "Importing file at $import"
-    elif [ -d "$import" ]; then
-        echod "Importing files in directory at $import"
-        files=$(find "$import" \
-            -type f \
-            -maxdepth "$scan_depth" \
-            -name "*.pem" \
-            -o -name "*.conf" \
-            -o -name "*.cert" \
-            -o -name "*.crt" \
-            -o -name "*.cer" \
-            2>/dev/null);
 
-        for file in $files; do
-            ftype=""
-            ca_type=""
-            ca_index=""
-            filepath="$(absolutepath "$file")"
-            filename="$(basename "$file")"
-            dirpath="$(dirname "$filepath")"
-            ftype="$(get_file_type "$filepath")"
+  # Overwrite DC_DB with tmpdb
+  if ! mv -f -- "$tmpdb" "$DC_DB"; then
+    echoe "Error: Overwriting database $DC_DB failed"
+    rm -rf -- "$tmpdir"
+    return 1
+  fi
 
-            if [ "$ftype" = "root" ] || [ "$ftype" = "intermediate" ]; then
-                ca_issuer=$(openssl x509 -in "$ca_cert_file" -noout -issuer | sed 's/issuer=//')
-                ca_cn=$(echo "$ca_issuer" | sed -n 's/.*CN=\([^,]*\).*/\1/p' | sed 's/^ *//;s/ *$//')
-                ca_index="$(echo "$ca_cn" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")"
-            fi
+  # Clean up temporary directory
+  rm -rf -- "$tmpdir"
 
-            if [ "$copy_files" = "true" ] || [ "$move_files" = "true" ]; then
-                if [ "$ftype" = "key" ] && [ -n "$ca_type" ]; then
-                    dirpath="$DC_CAKEY"
-                elif [ "$ftype" = "key" ] && [ -z "$ca_type" ]; then
-                    dirpath="$DC_KEY"
-                elif [ "$ftype" = "cert" ] && [ -n "$ca_type" ]; then
-                    dirpath="$DC_CA"
-                elif [ "$ftype" = "cert" ] && [ -z "$ca_type" ]; then
-                    dirpath="$DC_CERT"
-                elif [ "$ftype" = "cfg" ]; then
-                    if grep -qE "CA:TRUE"; then
-                        dirpath="$DC_CA"
-                    else
-                        dirpath="$DC_CERT"
-                    fi
-                fi
-            fi
-            if [ "$copy_files" = "true" ]; then
-                cp -f "$filepath" "$dirpath/$filename"
-                echov "Copied file $filepath into dystopian-crypto directory: $dirpath"
-            elif [ "$move_files" = "true" ]; then
-                mv "$filepath" "$dirpath/$filename"
-                echov "Moved file $filepath into dystopian-crypto directory: $dirpath"
-            fi
+  if [ "$set_as_defaultRoot" = "true" ]; then
+    echoi "Set as defaultRootCA: $index"
+    set_defaultRootCA "$index"
+    echosv "Setting defaultRootCA successful."
+  fi
 
-            if [ -n "$ftype" ] && [ -n "$ca_type" ] && [ -n "$ca_index" ]; then
-                echod "Importing file into database:"
-                echod "${ca_type}CA Name: $ca_index Type: $ftype Path: $dirpath/$filename"
-                add_to_ca_database "$ca_type" "$ca_index" "$ftype" "$dirpath/$filename"
-                echosv "Imported file $dirpath/$filename into database"
-                filecount=$(("$filecount" + 1))
-            elif [ -n "$ftype" ]; then
-                echod "Importing file into database:"
-                echod "Name/Index: $RAND Type: $ftype Path: $dirpath/$filename"
-                add_to_ssl_keys_database "$RAND" "$ftype" "$dirpath/$filename"
-                echosv "Imported file $dirpath/$filename into database"
-                filecount=$(("$filecount" + 1))
-            else
-                echow "Was not able to identify file: $dirpath/$filename"
-            fi
-        done
-    fi
-    echos "Importing files successful. Imported $filecount files."
+  if [ "$set_as_default" = "true" ]; then
+    echoi "Set as defaultCA: $index"
+    set_defaultCA "$index"
+    echosv "Setting defaultCA successful."
+  fi
+
+  echos "Importing files successful. Imported $filecount files."
+  return 0
 }
 
 renew_certificate() {
-    echo
+  :
 }
 
 
