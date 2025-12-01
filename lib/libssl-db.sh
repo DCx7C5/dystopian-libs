@@ -548,6 +548,7 @@ remove_from_encrypted_db_by_path() {
     return 0
 }
 
+
 get_cert_type() {
   ct=$(jq -r --arg idx "$1" '.ssl.certs + .ssl.rootCAs + .ssl.intermediateCAs | to_entries[] | select(.key == $idx) | .value.type' -- "$DC_DB")
   case "$ct" in
