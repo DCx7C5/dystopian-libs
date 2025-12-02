@@ -226,28 +226,28 @@ set_defaultCA() {
 }
 
 set_defaultRootCA() {
-    index="$1"
+  index="$1"
 
-    # Check index exists in database
-    if ! has_index "$index"; then
-        echoe "Index: $index not found in database."
-        return 1
-    fi
+  # Check index exists in database
+  if ! has_index "$index"; then
+    echoe "Index: $index not found in database."
+    return 1
+  fi
 
-    temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
-    jq -e --arg idx "$index" '.defaultRootCA = $idx' -- "$DC_DB" > "$temp_file" || {
-        echoe "Setting $index as defaultRootCA failed"
-        rm -f -- "$temp_file"
-        return 1
-    }
+  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
+  jq -e --arg idx "$index" '.defaultRootCA = $idx' -- "$DC_DB" > "$temp_file" || {
+    echoe "Setting $index as defaultRootCA failed"
+    rm -f -- "$temp_file"
+    return 1
+  }
 
-    mv -- "$temp_file" "$DC_DB" || {
-        echoe "Overwriting database with temporary db failed"
-        rm -f -- "$temp_file"
-        return 1
-    }
-    echod "Updating defaultRootCA successful: $1"
-    return 0
+  mv -- "$temp_file" "$DC_DB" || {
+    echoe "Overwriting database with temporary db failed"
+    rm -f -- "$temp_file"
+    return 1
+  }
+  echod "Updating defaultRootCA successful: $1"
+  return 0
 }
 
 
@@ -330,34 +330,34 @@ default_ca_exists() {
 
 
 root_ca_index_exists() {
-    if jq -e \
+  if jq -e \
         --arg idx "$1" \
         '.ssl.rootCAs[$idx]
         // empty' -- "$DC_DB" >/dev/null 2>&1; then
         return 0
-    fi
-    return 1
+  fi
+  return 1
 }
 
 
 int_ca_index_exists() {
-    if jq -e \
-        --arg idx "$1" \
-        '.ssl.intermediateCAs[$idx]
-        // empty' -- "$DC_DB" >/dev/null 2>&1; then
-      return 0
-    fi
-    return 1
+  if jq -e \
+      --arg idx "$1" \
+      '.ssl.intermediateCAs[$idx]
+      // empty' -- "$DC_DB" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 
 cert_index_exists() {
-    if jq -e \
-        --arg idx "$1" \
-        '.ssl.certs[$idx]? // "empty" | (type == "string") and (length > 0)' -- "$DC_DB" >/dev/null 2>&1; then
-      return 0
-    fi
-    return 1
+  if jq -e \
+      --arg idx "$1" \
+      '.ssl.certs[$idx]? // "empty" | (type == "string") and (length > 0)' -- "$DC_DB" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 
@@ -393,35 +393,35 @@ add_to_ssl_certs() {
 
 
 add_to_ca_database() {
-    index="$2"
-    key="$3"
-    value="$4"
+  index="$2"
+  key="$3"
+  value="$4"
 
-    [ "$1" = "root" ] && storage_type="rootCAs"
-    [ "$1" = "intermediate" ] && storage_type="intermediateCAs"
+  [ "$1" = "root" ] && storage_type="rootCAs"
+  [ "$1" = "intermediate" ] && storage_type="intermediateCAs"
 
-    temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
-        echoe "Failed creating temporary database file"
-        return 1
-    }
+  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
+    echoe "Failed creating temporary database file"
+    return 1
+  }
 
-    if ! jq --arg typ "$storage_type" \
-            --arg idx "$index" \
-            --arg key "$key" \
-            --arg val "$value" \
-            '.ssl[$typ][$idx][$key] = $val' -- "$DC_DB" > "$temp_file"; then
-        echoe "Failed to update CA database for ssl: $storage_type: $index: $key"
-        rm -f -- "$temp_file"
-        return 1
-    fi
+  if ! jq --arg typ "$storage_type" \
+        --arg idx "$index" \
+        --arg key "$key" \
+        --arg val "$value" \
+        '.ssl[$typ][$idx][$key] = $val' -- "$DC_DB" > "$temp_file"; then
+    echoe "Failed to update CA database for ssl: $storage_type: $index: $key"
+    rm -f -- "$temp_file"
+    return 1
+  fi
 
-    mv -- "$temp_file" "$DC_DB" || {
-        echoe "Failed to move temporary database file to $DC_DB"
-        rm -f -- "$temp_file"
-        return 1
-    }
-    echod "Updating ssl CA database successful for ssl: $storage_type: $index: $key = $value"
-    return 0
+  mv -- "$temp_file" "$DC_DB" || {
+    echoe "Failed to move temporary database file to $DC_DB"
+    rm -f -- "$temp_file"
+    return 1
+  }
+  echod "Updating ssl CA database successful for ssl: $storage_type: $index: $key = $value"
+  return 0
 }
 
 
@@ -455,97 +455,97 @@ find_index_by_key_value() {
 
 
 find_certs_index_by_key_value() {
-    if ! jq -r \
-            --arg key "$1" \
-            --arg val "$2" \
-            '.ssl.certs | to_entries[] | select(.value[$key] == $val) | .key //
-             empty' -- "$DC_DB"; then
-        return 1
-    fi
-    return 0
+  if ! jq -r \
+          --arg key "$1" \
+          --arg val "$2" \
+          '.ssl.certs | to_entries[] | select(.value[$key] == $val) | .key //
+           empty' -- "$DC_DB"; then
+      return 1
+  fi
+  return 0
 }
 
 
 find_ca_index_by_key_value() {
-    if ! jq -r \
-            --arg key "$1" \
-            --arg val "$2" \
-            '.ssl.rootCAs + .ssl.intermediateCAs | to_entries[] | select(.value[$key] == $val) | .key //
-             empty' -- "$DC_DB"; then
-        return 1
-    fi
-    return 0
+  if ! jq -r \
+        --arg key "$1" \
+        --arg val "$2" \
+        '.ssl.rootCAs + .ssl.intermediateCAs | to_entries[] | select(.value[$key] == $val) | .key //
+         empty' -- "$DC_DB"; then
+    return 1
+  fi
+  return 0
 }
 
 
 cleanup_ca_index() {
-    ca_type="$1"
-    ca_index="$2"
+  ca_type="$1"
+  ca_index="$2"
 
-    temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
-        echoe "Failed creating temporary database file"
-        return 1
-    }
+  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
+    echoe "Failed creating temporary database file"
+    return 1
+  }
 
-    if ! jq -e --arg type "$ca_type" \
-            --arg idx "$ca_index" \
-            'del(.ssl[$type][$idx])' -- "$DC_DB" > "$temp_file"; then
-        echoe "Failed to cleanup .ssl.$ca_type.$ca_index"
-        rm -f -- "$temp_file"
-        return 1
-    fi
+  if ! jq -e --arg type "$ca_type" \
+        --arg idx "$ca_index" \
+        'del(.ssl[$type][$idx])' -- "$DC_DB" > "$temp_file"; then
+    echoe "Failed to cleanup .ssl.$ca_type.$ca_index"
+    rm -f -- "$temp_file"
+    return 1
+  fi
 
-    mv -- "$temp_file" "$DC_DB" || {
-        echoe "Failed to move temporary database file to $DC_DB"
-        rm -f -- "$temp_file"
-        return 1
-    }
+  mv -- "$temp_file" "$DC_DB" || {
+    echoe "Failed to move temporary database file to $DC_DB"
+    rm -f -- "$temp_file"
+    return 1
+  }
 
-    echosv "Cleaned up CA Index $ca_type:$ca_index"
-    return 0
+  echosv "Cleaned up CA Index $ca_type:$ca_index"
+  return 0
 }
 
 
 
 add_to_encrypted_db() {
-    temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
-        echoe "Failed creating temporary database file"
-        return 1
-    }
+  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
+    echoe "Failed creating temporary database file"
+    return 1
+  }
 
-    if ! jq -e --arg path "$1" --arg salt "$2" \
-         '.ssl.encrypted += [{"path": $path, "salt": $salt}]' -- "$DC_DB" > "$temp_file"; then
-        echoe "Something went wrong"
-        return 1
-    fi
+  if ! jq -e --arg path "$1" --arg salt "$2" \
+     '.ssl.encrypted += [{"path": $path, "salt": $salt}]' -- "$DC_DB" > "$temp_file"; then
+    echoe "Something went wrong"
+    return 1
+  fi
 
-    mv -- "$temp_file" "$DC_DB" || {
-        echoe "Not able to save temporary db as database file."
-        rm -f -- "$temp_file"
-        return 1
-    }
-    return 0
+  mv -- "$temp_file" "$DC_DB" || {
+    echoe "Not able to save temporary db as database file."
+    rm -f -- "$temp_file"
+    return 1
+  }
+  return 0
 }
 
 
 remove_from_encrypted_db_by_path() {
-    temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
-        echoe "Failed creating temporary database file"
-        return 1
-    }
+  temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
+    echoe "Failed creating temporary database file"
+    return 1
+  }
 
-    if ! jq -e --arg path "$1" \
-         '.ssl.encrypted = [.ssl.encrypted[] | select(.path != $path)]' -- "$DC_DB" > "$temp_file"; then
-        echoe "Something went wrong"
-        return 1
-    fi
+  if ! jq -e --arg path "$1" \
+     '.ssl.encrypted = [.ssl.encrypted[] | select(.path != $path)]' -- "$DC_DB" > "$temp_file"; then
+    echoe "Something went wrong"
+    return 1
+  fi
 
-    mv -- "$temp_file" "$DC_DB" || {
-        echoe "Not able to save temporary db as database file."
-        rm -f -- "$temp_file"
-        return 1
-    }
-    return 0
+  mv -- "$temp_file" "$DC_DB" || {
+    echoe "Not able to save temporary db as database file."
+    rm -f -- "$temp_file"
+    return 1
+  }
+  return 0
 }
 
 
