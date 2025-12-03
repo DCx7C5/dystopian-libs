@@ -7,67 +7,55 @@ umask 077
 
 
 echoi() {
-    if [ "$QUIET" -ne 1 ]; then
-        if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
-        printf "\033[1m\033[1;36m>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
-    fi
+  if [ "$QUIET" -ne 1 ]; then
+    if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
+    printf "\033[1;36m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
+  fi
 }
-
 
 echov() {
-    if [ "$VERBOSE" -eq 1 ]; then
-        if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
-        printf "\033[1m\033[1;36m>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
-    fi
+  if [ "$VERBOSE" -eq 1 ]; then
+    if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
+    printf "\033[1;36m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
+  fi
 }
-
 
 echod() {
-    if [ "$DEBUG" -eq 1 ]; then
-        printf "\033[1m\033[1;37m>   DEBUG:\033[0m %s\n" "$1"
-    fi
+  [ "$DEBUG" -eq 1 ] && printf "\033[1;37m>   DEBUG:\033[0m %s\n" "$1"
 }
-
 
 echow() {
-    wstr=""
-    if [ "$QUIET" -ne 1 ]; then
-      [ "$DEBUG" -eq 1 ] && wstr=" WARNING:"
-      printf "\033[1m\033[1;33m>%s\033[0m\033[1;37m\033[1m %s\033[0m" "$wstr" "$1" >&2
-      [ -z "$2" ] && printf "\n" >&2
-    fi
+  wstr=""
+  if [ "$QUIET" -ne 1 ]; then
+    [ "$DEBUG" -eq 1 ] && wstr=" WARNING:"
+    printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >&2
+    [ -z "$2" ] && printf "\n" >&2
+  fi
 }
-
 
 echowv() {
-    if [ "$VERBOSE" -eq 1 ]; then
-        echow "$1"
-    fi
+  [ "$VERBOSE" -eq 1 ] && echow "$1"
 }
-
 
 echoe() {
-    printf "\033[1m\033[1;31m>   ERROR:\033[0m\033[1;37m\033[1m %s\033[0m\n" "$1" >&2
+  printf "\033[1;31m>   ERROR:\033[1;37m %s\033[0m\n" "$1" >&2
 }
-
 
 echos() {
   istr=""
   if [ "$QUIET" -ne 1 ]; then
     [ "$DEBUG" -eq 1 ] && istr="  INFO:"
-    printf "\033[1m\033[1;32m>>>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
+    printf "\033[1;32m>>>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
   fi
 }
-
 
 echosv() {
   istr=""
   if [ "$VERBOSE" -eq 1 ]; then
     [ "$DEBUG" -eq 1 ] && istr="    INFO:"
-    printf "\033[1m\033[1;32m>%s\033[0m\033[1;37m\033[1m %s\033[0m\n" "$istr" "$1"
+    printf "\033[1;32m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
   fi
 }
-
 
 askyesno() {
   default="$2"
@@ -97,7 +85,6 @@ askyesno() {
   done
 }
 
-
 askpassword() {
   PASSPHRASE=
   PASSPHRASE=$(
@@ -110,8 +97,8 @@ askpassword() {
     echo > /dev/tty
     printf '%s\n' "$password"
   )
+  unset PASSPHRASE
 }
-
 
 is_ip() {
   ip="$1"
@@ -123,24 +110,20 @@ is_ip() {
   return 1
 }
 
-
 shorthelp() {
   echo ""
   help | sed -n "/^  $1/,/^$/p"
 }
-
 
 sslhelp() {
   echo ""
   help | sed -n "/^SSL Com/,/^GPG/{/^GPG/d; p}"
 }
 
-
 gpghelp() {
   echo ""
   help | sed -n "/^GPG Com/,/^Main/{/^Main/d; p}"
 }
-
 
 reset_dystopian_crypto() {
   ssl="${1:-false}"
@@ -198,7 +181,6 @@ reset_dystopian_crypto() {
     exit 0
   fi
 }
-
 
 # Maintenance and utility functions
 show_index() {
@@ -587,10 +569,6 @@ set_permissions_and_owner() {
   fi
   echod "Successfully set perm ($perm) and owner 'root:$DYSTOPIAN_USER' on $1"
   return 0
-}
-
-mktemps() {
-  mktemp -- "$(mktemp -d -- "/tmp/XXXXXXXXXXXXXXX")/XXXXXXXXXXXXXXX"
 }
 
 
