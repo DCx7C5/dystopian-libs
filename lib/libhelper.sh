@@ -34,7 +34,8 @@ echow() {
 }
 
 echowv() {
-  [ "$VERBOSE" -eq 1 ] && echow "$1"
+  [ "$VERBOSE" -ne 1 ] && return 0
+  echow "$1"
 }
 
 echoe() {
