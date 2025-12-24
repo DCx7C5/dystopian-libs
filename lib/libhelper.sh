@@ -131,7 +131,7 @@ reset_dystopian_crypto() {
   gpg="${2:-false}"
   if askyesno "Are you sure you want to reset the config and keys?" "n";then
     if askyesno "Do you want to backup the directory first?" "y"; then
-      cp -rf "$DC_DIR" "${DC_DIR}.bkp" 2>/dev/null || {
+      cp -rf "$DC_CFGDIR" "${DC_CFGDIR}.bkp" 2>/dev/null || {
           echoe "Problem backing up keys and config"
           exit 1
       }
@@ -139,7 +139,7 @@ reset_dystopian_crypto() {
     fi
 
     if [ -n "$ssl" ] && [ "$ssl" = "true" ]; then
-      if askyesno "Last WARNING! Answering yes will reset everything SSL related in /etc/dystopian-crypto/" "N"; then
+      if askyesno "Last WARNING! Answering yes will reset everything SSL related in $DC_CFGDIR & $DC_DB" "N"; then
         rm -rf -- "${DC_CA}" "${DC_CERT}" "${DC_CRL}" 2>/dev/null || {
             echoe "Problem resetting dystopian-crypto ssl"
             exit 1
@@ -148,7 +148,7 @@ reset_dystopian_crypto() {
             echoe "Problem creating ssl directories"
             exit 1
         }
-        set_permissions_and_owner "$DC_DIR" 750
+        set_permissions_and_owner "$DC_CFGDIR" 750
         set_permissions_and_owner "$DC_KEY" 700
         set_permissions_and_owner "$DC_CAKEY" 700
         reset_ssl_index
@@ -159,7 +159,7 @@ reset_dystopian_crypto() {
       fi
     fi
     if [ -n "$gpg" ] && [ "$gpg" = "true" ]; then
-      if askyesno "Last WARNING! Answering yes will reset everything GPG related in /etc/dystopian-crypto/" "N"; then
+      if askyesno "Last WARNING! Answering yes will reset everything GPG related in $DC_GNUPG & $DC_DB" "N"; then
         rm -rf -- "${DC_GNUPG}" 2>/dev/null || {
           echoe "Problem resetting dystopian-crypto GPG"
           exit 1
@@ -1089,6 +1089,10 @@ preparse() {
             --verbose|-v) VERBOSE=1; shift;;
             --quiet|-q) DEBUG=0; VERBOSE=0; QUIET=1; shift;;
             --debug) DEBUG=1; VERBOSE=1; shift;;
+            --external|--ext|--usb|--external=*|--ext=*|--usb=*)
+              USB_STORAGE=
+              shift
+              ;;
             *)
                 if [ -z "$DC_POS_ARGS" ]; then
                     DC_POS_ARGS=$1
