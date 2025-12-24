@@ -1,17 +1,17 @@
 # shellcheck shell=sh
 # shellcheck disable=SC2034
 
-AUTHOR="DCx7C5 <dcxdevelopment@protonmail.com>"
 
 DYSTOPIAN_USER="root"
 DC_POS_ARGS=
 
-DYSTOPIAN_CFGDIR="/etc"
-
+DYSTOPIAN_CFGDIR="/etc/dystopian"
+DYSTOPIAN_DATADIR="/var/lib/dystopian"
+DYSTOPIAN_LIBDIR="/usr/lib/dystopian"
 
 # HOSTS
-DH_DIR="$DYSTOPIAN_CFGDIR/dystopian-hosts"
-DH_DB="$DH_DIR/hosts-db.json"
+DH_DIR="$DYSTOPIAN_CFGDIR/hosts"
+DH_DB="$DH_DIR/data.json"
 
 
 # AURTOOLS
