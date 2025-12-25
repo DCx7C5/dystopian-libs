@@ -1136,3 +1136,245 @@ cleanup_stack_gpghome() {
   }
   export GNUPGHOME=$OLDGNUPGHOME
 }
+
+
+
+
+
+format_storage() {
+  stor_path="$1"
+  max_storage="${2:-2G}"
+  size_fat32="${3:-129MiB}"
+
+  if ! askyesno "Do you really want to format the storage device?" "n"; then
+    echoi "Aborted formating storage device $stor_path"
+    exit 0
+  fi
+  umount "${stor_path}*" 2>/dev/null || true
+
+  if ! askyesno "Are you sure you want to wipe the storage device??" "n"; then
+    echoi "Aborted."
+    exit 0
+  fi
+
+  wipefs -a "$stor_path"
+  parted -s "$stor_path" mklabel gpt
+  parted -s "${stor_path}" mkpart primary fat32 1MiB "$size_fat32"
+  parted -s "${stor_path}" mkpart primary "$size_fat32" "$max_storage"
+  mkfs.vfat -F 32 -n "UEFI_Update" "${stor_path}1"
+
+  cryptsetup luksFormat \
+    --type luks2 \
+    --cipher aes-xts-plain64 \
+    --key-size 512 \
+    --hash sha512 \
+    --iter-time 5000 \
+    --pbkdf argon2id \
+    --sector-size 4096 \
+    "${stor_path}2"
+
+  USB_SERIAL=$(
+    lsblk -o NAME,SIZE,MODEL,SERIAL,LABEL,MOUNTPOINT,FSTYPE \
+      | grep -E "$stor_path" \
+      | head -1 \
+      | awk -F' ' '{print $NF-1}'
+    )
+
+  cryptsetup luksOpen "${stor_path}2" usb_crypt
+  mkfs.ext4 -L "${USB_LABEL:-DYSTO_CERTS}" /dev/mapper/usb_crypt
+  cryptsetup close usb_crypt
+
+
+  sed -i "s/# USB_SERIAL*|USB_SERIAL*/USB_SERIAL=$(id -u).$USB_SERIAL/" -- "$DC_CFG"
+  set_permissions_and_owner "$DC_CFG" 600
+  echos "Successfully formated USB storage devices ${stor_path} - ${USB_LABEL}"
+}
+
+
+
+usb_storage_missing() {
+  counter=0
+  counter_max="${COUNTER_MAX:-5}"
+  device_id="${1:-$USB_DEVICE_ID}"
+  device_path="sd$(lsblk -o NAME,SIZE,MODEL,SERIAL,LABEL,MOUNTPOINT,FSTYPE \
+    | grep -E "$device_id" -A3 \
+    | grep -E "crypto_LUKS" \
+    | awk -F'sd' '{print $2}' \
+    | awk -F' ' '{print $1}')"
+  echow "USB Storage Device not found or plugged in!"
+
+  while [ $counter -le "$counter_max" ]; do
+    if askyesno "Insert Storage Device ${device_path} and press Enter:" "y"; then
+      if [ ! -f "$device_path" ]; then
+        echosv "USB storage device "
+      fi
+    else
+      :
+    fi
+    counter=$(("$counter" + 1))
+  done
+}
+
+
+_install_system_truststore() {
+  index="$1"
+  type="${2:-cert}"
+  perms=444
+
+  [ "$type" = "key" ] && perms=400
+
+  if [ "$type" != "cert" ] && [ "$type" != "key" ]; then
+    echoe "type must be either cert or key"
+    return 1
+  fi
+
+  ck_path=$(get_value_from_index "$index" "$type")
+
+  echoi "Installing CA certificate into system trust store..."
+  # Arch Linux: uses /etc/ca-certificates/trust-source/anchors + p11-kit
+  if [ -d /etc/ca-certificates/trust-source/anchors ]; then
+    echov "Detected Arch Linux style trust store."
+    ts_path="/etc/ca-certificates/trust-source/anchors/$(basename "$ck_path%.*").crt"
+    cp "$ck_path" "$ts_path"
+    set_permissions_and_owner "$ts_path" "$perms"
+    trust extract-compat || {
+      echoe "Error running ´trust extract-compat´"
+      return 1
+    }
+    echosv "CA installed for Arch Linux (system-wide)."
+
+  # Debian/Ubuntu: uses /usr/local/share/ca-certificates
+  elif [ -d /usr/local/share/ca-certificates ]; then
+    echov "Detected Debian/Ubuntu style trust store."
+    ts_path="/usr/local/share/ca-certificates/$(basename "$ck_path%.*").crt"
+    cp "$ck_path" "$ts_path"
+    set_permissions_and_owner "$ts_path" "$perms"
+    update-ca-certificates || {
+      echoe "Error running ´update-ca-certificates´"
+      return 1
+    }
+    echosv "CA installed for Debian/Ubuntu (system-wide)."
+
+  # Fallback for other distros using p11-kit (e.g., Fedora, openSUSE)
+  elif command -v trust >/dev/null 2>&1 && [ -d /etc/pki/ca-trust/source/anchors ]; then
+    echov "Detected p11-kit style trust store (e.g., Fedora)."
+    ts_path="/etc/pki/ca-trust/source/anchors/$(basename "$ck_path")"
+    cp "$ck_path" "$ts_path"
+    set_permissions_and_owner "$ts_path" "$perms"
+    update-ca-trust extract || {
+      echoe "Error running ´update-ca-trust extract´"
+      return 1
+    }
+    echosv "CA installed (p11-kit system-wide)."
+
+  else
+      echow "No recognized system trust store found. Skipping system-wide install."
+      echow "Most applications will still trust it via NSS (Chrome/Firefox)."
+      return 1
+  fi
+
+  echos "Installation to system wide trust store successful"
+}
+
+_install_browser_truststore() {
+  index="$1"
+  trust="$2"
+  ck_path=$(get_value_from_index "$index" "cert")
+  name=$(get_value_from_index "$index" "name")
+  installed=0
+
+  # All Firefox profiles
+  if [ "$trust" = "firefox" ] && [ -d "$HOME/.mozilla/firefox" ]; then
+      for profile_dir in "$HOME"/.mozilla/firefox/*/; do
+          if [[ -f "$profile_dir/cert9.db" || -f "$profile_dir/cert8.db" ]]; then
+              certutil -d sql:"$profile_dir" -A -t "C,," -n "$name" -i "$ck_path"
+              echosv "Updated Firefox profile: $(basename "$profile_dir")"
+              installed=$(( "$installed" + 1))
+          fi
+      done
+  else
+      echow "No Firefox profiles found. Skipping NSS database"
+  fi
+
+  # Chrome/Brave/Chromium shared NSS DB
+  if [ "$trust" = "chrome" ] && [ -d "$HOME/.pki/nssdb" ]; then
+    certutil -d sql:"$HOME/.pki/nssdb" -A -t "C,," -n "$name" -i "$ck_path"
+    echosv "Updated Chrome/Chromium/Edge NSS database."
+    installed=$(( "$installed" + 1))
+  else
+    echow "No Chrome/Brave/Chromium profiles found. Skipping NSS database"
+  fi
+
+  # Optional: Brave browser (uses its own NSS DB on some systems)
+  if { [ "$trust" = "chrome" ] || [ "$trust" = "brave" ]; } && [ -d "$HOME/.config/BraveSoftware/Brave-Browser/Default" ]; then
+    brave_nss="$HOME/.config/BraveSoftware/Brave-Browser/Default/nssdb"
+    if [ -d "$brave_nss" ]; then
+      certutil -d sql:"$brave_nss" -A -t "C,," -n "$name" -i "$ck_path" 2>/dev/null && \
+        echosv "Updated Brave NSS database."
+        installed=$(( "$installed" + 1))
+      fi
+  fi
+
+  if [ "$installed" -ne 0 ]; then
+    echosv "Please fully restart all browsers (Chrome, Chromium, Edge, Firefox, Brave) for the changes to take effect."
+    echos "Installation to browser trust stores successful"
+    return 0
+  else
+    echow "No NSS databases or Browser trust stores found"
+  fi
+}
+
+install_truststore() {
+  ca_name="$1" && [ -z "$1" ] && echoe "CA name is required" && return 1
+  index="${ca_name:+$(echo "$ca_name" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
+  trusts=
+  pfx=
+
+  if echo "$2" | grep -qi "system" 2>/dev/null 2>&1; then
+    system_trust="true"
+  fi
+  if echo "$2" | grep -qi "fire" 2>/dev/null 2>&1; then
+    firefox_trust="true"
+  fi
+  if echo "$2" | grep -qiE "chrome|brave" 2>/dev/null 2>&1; then
+    chrome_trust="true"
+  fi
+
+  # Check user for trust ownership
+  if { [ "$firefox_trust" = "true" ] || [ "$chrome_trust" = "true" ]; } && [ "$DYSTOPIAN_USER" = "root" ]; then
+    echoe "Installing to browser trust not possible, either execute with --user <USER> or execute with sudo!"
+    return 1
+  fi
+
+  # certutil binary check
+  if ! command -v certutil >/dev/null 2>&1; then
+    echoe "certutil not found (from package nss / nss-tools / libnss3-tools)."
+    return 1
+  fi
+
+  if [ "$system_trust" = "true" ]; then
+    _install_system_truststore "$index"
+    trusts="System Wide"
+    pfx=', '
+  fi
+
+  if [ "$firefox_trust" = "true" ]; then
+    _install_browser_truststore "$index" "firefox"
+    trusts="${trusts}${pfx}Firefox"
+  fi
+
+  if [ "$chrome_trust" = "true" ]; then
+    _install_browser_truststore "$index" "chrome"
+    trusts="${trusts}${pfx}Chrome/Brave"
+  fi
+
+  status=$?
+
+  if [ "$status" -eq 0 ]; then
+    echos "Successfully installed cert to $trusts"
+    return 0
+  else
+    echoe "Failed installing cert to NSS databases or system trust"
+    return 1
+  fi
+}
