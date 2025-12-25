@@ -247,24 +247,33 @@ _create_and_verify_key() {
   password="$2"
   salt_out="$3"
   no_argon="$4"
+  use_rsa="$5"
   passphrasedbg=$({ [ "${2}" = "gui" ] || [ "${2}" = "GUI" ]; } && echo "[GUI]")
   passphrasedbg=$({ [ -n "${2}" ]  && [ ! -f "${2}" ]; } && echo "[SET]" || echo "${2}")
+
+  algo="EC"
+  key_opt="ec_paramgen_curve:secp384r1"
+  [ "$use_rsa" = "true" ] && algo="RSA" && key_opt="rsa_keygen_bits:4096"
 
   echod "Starting _create_and_verify_key with parameters:"
   echod "    key_out: $key_out"
   echod "   password: $passphrasedbg"
   echod "   salt_out: $salt_out"
   echod "   no_argon: $no_argon"
+  echod "    use_rsa: $use_rsa"
+  echod "       algo: $algo"
+  echod "    key_opt: $key_opt"
+
 
   (
     if [ -z "$password" ]; then
-      echoi "Generating unencrypted secp384r1 private key..."
+      echoi "Generating unencrypted $algo:$key_opt private key..."
 
       # Generate key
-      echod "Calling openssl ecparam -genkey -name secp384r1 -out $key_out -outform PEM"
-      if ! openssl ecparam \
-                   -genkey \
-                   -name secp384r1 \
+      echod "Calling openssl genpkey -algorithm $algo -pkeyopt $key_opt -nodes -out $key_out -outform PEM"
+      if ! openssl genpkey \
+                   -algorithm "$algo" \
+                   -pkeyopt "$key_opt" \
                    -out "$key_out" \
                    -outform PEM 2>/dev/null; then
         echoe "Failed to generate private key"
@@ -281,18 +290,19 @@ _create_and_verify_key() {
       fi
       echosv "Private key validation successful"
     else
-      echoi "Generating encrypted secp384r1 private key..."
+      echoi "Generating encrypted $algo:$key_opt private key..."
       if [ "$no_argon" = "true" ]; then
         echov "Encrypting with PBKDF2 key..."
 
         # Generate key
-        echov "Calling _create_pbkdf2_derived_key_pw $password | openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -aes-256-cbc -pass stdin -out $key_out"
+        echov "Calling _create_pbkdf2_derived_key_pw $password | openssl genpkey -algorithm $algo -pkeyopt $key_opt -aes-256-cbc -pass stdin -out $key_out"
         if ! _create_pbkdf2_derived_key_pw "$password" | \
           openssl genpkey \
-                  -algorithm EC \
-                  -pkeyopt ec_paramgen_curve:secp384r1 \
+                  -algorithm "$algo" \
+                  -pkeyopt "$key_opt" \
                   -aes-256-cbc \
                   -pass stdin \
+                  -outform PEM \
                   -out "$key_out" 2>/dev/null; then
             echoe "Failed to generate encrypted private key with PBKDF2"
             return 1
@@ -316,10 +326,11 @@ _create_and_verify_key() {
         echod "Calling _create_argon2id_derived_key_pw $password $salt_out | openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -aes-256-cbc -pass stdin -out $key_out"
         if ! _create_argon2id_derived_key_pw "$password" "$salt_out" | \
           openssl genpkey \
-                  -algorithm EC \
-                  -pkeyopt ec_paramgen_curve:secp384r1 \
+                  -algorithm "$algo" \
+                  -pkeyopt "$key_opt" \
                   -aes-256-cbc \
                   -pass stdin \
+                  -outform PEM \
                   -out "$key_out" 2>/dev/null; then
           echoe "Failed to generate encrypted private key with Argon2id"
           return 1
@@ -353,6 +364,7 @@ _create_and_verify_csr() {
   password="$3"
   salt="$4"
   config_file="$5"
+  use_rsa="$6"
   passphrasedbg=$({ [ "${3}" = "gui" ] || [ "${3}" = "GUI" ]; } && echo "[GUI]")
   passphrasedbg=$({ [ -n "${3}" ]  && [ ! -f "${3}" ]; } && echo "[SET]" || echo "${3}")
   saltdbg=$({ [ -n "${4}" ]  && [ ! -f "${4}" ]; } && echo "[SET]" || echo "${4}")
@@ -363,13 +375,17 @@ _create_and_verify_csr() {
   echod "    password: $passphrasedbg"
   echod "        salt: $saltdbg"
   echod " config_file: $config_file"
+  echod "     use_rsa: $use_rsa"
+
+  rsa_flag="-new"
+  [ "$use_rsa" = 'true' ] && rsa_flag="-new -newkey rsa:4096"
 
   (
     # Handle password and salt
     if [ -n "$password" ]; then
       if [ -n "$salt" ]; then
         echov "Using Argon2id derived key for CSR generation"
-        echod "Calling _create_argon2id_derived_key_pw [pass] [salt] | openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
+        echod "Calling _create_argon2id_derived_key_pw [pass] [salt] | openssl req $rsa_flag -key $key_file -out $csr_out -config $config_file -passin stdin"
         if ! _create_argon2id_derived_key_pw "$password" "$salt" | \
         openssl req \
                 -new \
@@ -383,7 +399,7 @@ _create_and_verify_csr() {
         echosv "CSR generated successfully with Argon2id"
       else
         echov "Using PBKDF2 derived key for CSR generation"
-        echod "Calling _create_pbkdf2_derived_key_pw [password] | openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
+        echod "Calling _create_pbkdf2_derived_key_pw [password] | openssl req $rsa_flag -key $key_file -out $csr_out -config $config_file -passin stdin"
         if ! _create_pbkdf2_derived_key_pw "$password" | \
         openssl req \
                 -new \
@@ -398,9 +414,9 @@ _create_and_verify_csr() {
       fi
     else
       echov "No password provided, generating CSR without password"
-      echod "Calling openssl req -new -key $key_file -out $csr_out -config $config_file"
+      echod "Calling openssl req $rsa_flag -key $key_file -out $csr_out -config $config_file"
       if ! openssl req \
-                   -new \
+                    -new \
                    -key "$key_file" \
                    -out "$csr_out" \
                    -config "$config_file" 2>/dev/null; then
@@ -471,7 +487,7 @@ _create_and_verify_cert() {
     if [ -n "$pass" ]; then
       if [ -f "$salt" ]; then
         echov "Using Argon2id derived key for signing"
-        echod "_create_argon2id_derived_key_pw \"$passdbg\" \"$saltdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file -passin stdin"
+        echod "_create_argon2id_derived_key_pw \"$passdbg\" \"$saltdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -extensions $extensions -extfile $config_file -passin stdin"
         if ! _create_argon2id_derived_key_pw "$pass" "$salt" | \
           openssl x509 \
                   -req \
@@ -480,8 +496,6 @@ _create_and_verify_cert() {
                   -CAkey "$ca_key_file" \
                   -CAcreateserial \
                   -out "$cert_out" \
-                  -days "$days" \
-                  -sha384 \
                   -extensions "$extensions" \
                   -extfile "$config_file" \
                   -passin stdin 2>/dev/null; then
@@ -490,7 +504,7 @@ _create_and_verify_cert() {
         fi
       else
         echov "No salt file found, using password directly"
-        echod "_create_pbkdf2_derived_key_pw \"$passdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file -passin stdin"
+        echod "_create_pbkdf2_derived_key_pw \"$passdbg\" | openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -extensions $extensions -extfile $config_file -passin stdin"
         if ! _create_pbkdf2_derived_key_pw "$pass" | \
           openssl x509 \
                   -req \
@@ -499,8 +513,6 @@ _create_and_verify_cert() {
                   -CAkey "$ca_key_file" \
                   -CAcreateserial \
                   -out "$cert_out" \
-                  -days "$days" \
-                  -sha384 \
                   -extensions "$extensions" \
                   -extfile "$config_file" \
                   -passin stdin 2>/dev/null; then
@@ -510,7 +522,7 @@ _create_and_verify_cert() {
       fi
     else
       echov "No password provided, signing with unencrypted CA private key"
-      echod "Calling openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -days $days -sha384 -extensions $extensions -extfile $config_file"
+      echod "Calling openssl x509 -req -in $csr_file -CA $ca_cert_file -CAkey $ca_key_file -CAcreateserial -out $cert_out -extensions $extensions -extfile $config_file"
       if ! openssl x509 \
                    -req \
                    -in "$csr_file" \
@@ -518,8 +530,6 @@ _create_and_verify_cert() {
                    -CAkey "$ca_key_file" \
                    -CAcreateserial \
                    -out "$cert_out" \
-                   -days "$days" \
-                   -sha384 \
                    -extensions "$extensions" \
                    -extfile "$config_file" 2>/dev/null; then
         echoe "Failed to sign CSR"
@@ -741,6 +751,7 @@ create_private_key() {
   salt_out="${4:-$(absolutepathidx "$DC_KEY/key.salt" "$index")}"
 
   no_argon="${5:-false}"
+  use_rsa="${6:-false}"
 
   echoi "Creating openssl private key..."
 
@@ -750,7 +761,8 @@ create_private_key() {
   echod "       key_out: $key_out"
   echod "      password: $([ -n "$password" ] && echo "[SET]")"
   echod "      salt_out: $salt_out"
-  echod "      no-argon: $no_argon"
+  echod "      no_argon: $no_argon"
+  echod "       use_rsa: $use_rsa"
 
   # Validate inputs
   if [ -z "$key_name" ] && [ -z "$key_out" ]; then
@@ -786,8 +798,8 @@ create_private_key() {
   fi
 
   # Generate and verify key
-  echod "Calling _create_and_verify_key $key_out $password $salt_out $no_argon"
-  _create_and_verify_key "$key_out" "$password" "$salt_out" "$no_argon" || {
+  echod "Calling _create_and_verify_key $key_out $password $salt_out $no_argon $use_rsa"
+  _create_and_verify_key "$key_out" "$password" "$salt_out" "$no_argon" "$use_rsa" || {
     echoe "Failed to generate private key for $key_out"
     if [ -n "$salt_out" ] && [ ! -f "$salt_out" ]; then
       echoe "Salt file $salt_out does not exist"
@@ -809,6 +821,11 @@ create_private_key() {
       add_to_ssl_certs "$index" "kdf" "pbkdf2"
   fi
   add_to_ssl_certs "$index" "name" "$1"
+  if [ "$use_rsa" = "true" ]; then
+    add_to_ssl_certs "$index" "algo" "RSA"
+  else
+    add_to_ssl_certs "$index" "algo" "EC"
+  fi
 
   echos "Private key creation successful"
   return 0
@@ -828,7 +845,7 @@ create_certificate_authority() {
   ca_key_out="${2:-$(absolutepathidx "$DC_CAKEY/ca-key.pem" "$index")}"
 
   ca_cert_out="${3:+$(absolutepathidx "$3" "$index")}"
-  ca_cert_out="${3:-$(absolutepathidx "$DC_CA/ca.pem" "$index")}"
+  ca_cert_out="${3:-$(absolutepathidx "$DC_CA/ca-cert.pem" "$index")}"
 
   ca_pass="${4:+$([ -s "$4" ] && absolutepath "$4")}"
   no_argon="${6:-false}"
@@ -878,11 +895,14 @@ create_certificate_authority() {
                                      && get_value_from_ca_index "$root_ca_index" "salt")}"
 
     fullchain_out="${26:+$(absolutepathidx "${26}" "$index")}"
-    fullchain_out="${26:-$(absolutepathidx "${DC_CERT}/fullchain.pem" "$index")}"
+    fullchain_out="${26:-$(absolutepathidx "${DC_CA}/fullchain.pem" "$index")}"
   fi
 
   set_as_default="${24:-false}"
   set_as_defaultRoot="${25:-false}"
+
+  use_rsa="${27:-false}"
+  install_trust="${28:-false}"
 
   echod "Starting create_certificate_authority with parameters:"
   echod "           ca_name: $ca_name"
@@ -909,6 +929,7 @@ create_certificate_authority() {
   echod "      root_ca_pass: $([ -n "$root_ca_pass" ] && echo "[SET]" || echo "[EMPTY]")"
   echod "      root_ca_salt: $([ -n "$root_ca_salt" ] && echo "[SET]" || echo "[EMPTY]")"
   echod "     fullchain_out: $fullchain_out"
+  echod "           use_rsa: $use_rsa"
 
   # Validate root CA parameters for intermediate CA
   if [ "$intermediate" = "true" ]; then
@@ -988,16 +1009,16 @@ create_certificate_authority() {
 
     echoi "Generating intermediate CA certificate signed by $root_ca_index"
     # Create and verify key
-    echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $no_argon"
-    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$no_argon"; then
+    echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $no_argon, $use_rsa"
+    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$no_argon" "$use_rsa"; then
       echoe "Failed to generate CA private key"
       return 1
     fi
     echosv "Creating and verifying KEY successful"
 
     # Create csr and verify
-    echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out"
-    if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out"; then
+    echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $use_rsa"
+    if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$use_rsa"; then
       echoe "Failed to generate CSR for intermediate CA"
       return 1
     fi
@@ -1067,6 +1088,12 @@ create_certificate_authority() {
     add_to_ca_database "$ca_storage_type" "$index" "kdf" "argon2id"
   elif [ -n "$ca_pass" ] && [ -z "$ca_salt_out" ]; then
     add_to_ca_database "$ca_storage_type" "$index" "kdf" "pbkdf2"
+  fi
+
+  if [ "$use_rsa" = "true" ]; then
+    add_to_ca_database "$ca_storage_type" "$index" "algo" "RSA"
+  else
+    add_to_ca_database "$ca_storage_type" "$index" "algo" "EC"
   fi
 
   # Set as default CA if first root CA
@@ -1207,8 +1234,8 @@ create_certificate_signing_request() {
 
   # Create CSR
   echoi "Generating Certificate Signing Request"
-  echod "Calling _create_and_verify_csr $csr_out $key_file $password $salt $cfg_out"
-  _create_and_verify_csr "$csr_out" "$key_file" "$password" "$salt" "$cfg_out" || {
+  echod "Calling _create_and_verify_csr $csr_out $key_file $password $salt $cfg_out $use_rsa"
+  _create_and_verify_csr "$csr_out" "$key_file" "$password" "$salt" "$cfg_out" "$use_rsa" || {
     echoe "Failed calling _create_and_verify_csr"
     rm -f -- "$cfg_out" "$csr_out" || true
     return 1
@@ -1270,6 +1297,8 @@ sign_certificate_request() {    # sign CSR
   fullchain_out="${13:+$(absolutepathidx "${13}" "$index")}"
   fullchain_out="${13:-$(absolutepathidx "${DC_CERT}/fullchain.pem" "$index")}"
 
+  use_rsa="${14:-false}"
+
   # Check for default CA if no CA params set
   [ -z "$ca_index" ] && ca_index="$(find_defaultCA)"
   [ -n "$ca_index" ] && [ -z "$ca_cert_file" ] && ca_cert_file="$(get_value_from_ca_index "$ca_index" "cert")"
@@ -1290,6 +1319,7 @@ sign_certificate_request() {    # sign CSR
   echod "      keep_csr: $keep_csr"
   echod "      keep_cfg: $keep_cfg"
   echod " fullchain_out: $fullchain_out"
+  echod "       use_rsa: $use_rsa"
   echod "          user: $DYSTOPIAN_USER"
 
   echoi "Signing CSR: $csr_file"
@@ -2280,5 +2310,3 @@ import_ssl() {
 renew_certificate() {
   :
 }
-
-
