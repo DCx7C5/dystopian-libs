@@ -1219,6 +1219,7 @@ usb_storage_missing() {
 _install_system_truststore() {
   index="$1"
   type="${2:-cert}"
+  ck_path="$3"
   perms=444
 
   [ "$type" = "key" ] && perms=400
@@ -1228,13 +1229,12 @@ _install_system_truststore() {
     return 1
   fi
 
-  ck_path=$(get_value_from_index "$index" "$type")
 
   echoi "Installing CA certificate into system trust store..."
   # Arch Linux: uses /etc/ca-certificates/trust-source/anchors + p11-kit
   if [ -d /etc/ca-certificates/trust-source/anchors ]; then
     echov "Detected Arch Linux style trust store."
-    ts_path="/etc/ca-certificates/trust-source/anchors/$(basename "$ck_path%.*").crt"
+    ts_path="/etc/ca-certificates/trust-source/anchors/$(basename "${ck_path%.*}").crt"
     cp "$ck_path" "$ts_path"
     set_permissions_and_owner "$ts_path" "$perms"
     trust extract-compat || {
@@ -1246,7 +1246,7 @@ _install_system_truststore() {
   # Debian/Ubuntu: uses /usr/local/share/ca-certificates
   elif [ -d /usr/local/share/ca-certificates ]; then
     echov "Detected Debian/Ubuntu style trust store."
-    ts_path="/usr/local/share/ca-certificates/$(basename "$ck_path%.*").crt"
+    ts_path="/usr/local/share/ca-certificates/$(basename "${ck_path%.*}").crt"
     cp "$ck_path" "$ts_path"
     set_permissions_and_owner "$ts_path" "$perms"
     update-ca-certificates || {
@@ -1273,14 +1273,14 @@ _install_system_truststore() {
       return 1
   fi
 
-  echos "Installation to system wide trust store successful"
+  echosv "Installation to system wide trust store successful"
 }
 
 _install_browser_truststore() {
-  index="$1"
-  trust="$2"
-  ck_path=$(get_value_from_index "$index" "cert")
-  name=$(get_value_from_index "$index" "name")
+  name="$1"
+  index="$2"
+  trust="$3"
+  ck_path="$4"
   installed=0
 
   # All Firefox profiles
@@ -1317,7 +1317,7 @@ _install_browser_truststore() {
 
   if [ "$installed" -ne 0 ]; then
     echosv "Please fully restart all browsers (Chrome, Chromium, Edge, Firefox, Brave) for the changes to take effect."
-    echos "Installation to browser trust stores successful"
+    echosv "Installation to browser trust stores successful"
     return 0
   else
     echow "No NSS databases or Browser trust stores found"
@@ -1327,10 +1327,12 @@ _install_browser_truststore() {
 install_truststore() {
   ca_name="$1" && [ -z "$1" ] && echoe "CA name is required" && return 1
   index="${ca_name:+$(echo "$ca_name" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
+  ca_cert_path="${3:-$(get_value_from_index "$index" "cert")}"
+  ca_storage_type="$(get_value_from_index "$index" "type")"
   trusts=
   pfx=
 
-  if echo "$2" | grep -qi "system" 2>/dev/null 2>&1; then
+  if echo "$2" | grep -qi "sys" 2>/dev/null 2>&1; then
     system_trust="true"
   fi
   if echo "$2" | grep -qi "fire" 2>/dev/null 2>&1; then
@@ -1353,19 +1355,29 @@ install_truststore() {
   fi
 
   if [ "$system_trust" = "true" ]; then
-    _install_system_truststore "$index"
+    _install_system_truststore "$index" "cert" "$ca_cert_path"
     trusts="System Wide"
     pfx=', '
   fi
 
   if [ "$firefox_trust" = "true" ]; then
-    _install_browser_truststore "$index" "firefox"
+    _install_browser_truststore "$ca_name" "$index" "firefox" "$ca_cert_path"
     trusts="${trusts}${pfx}Firefox"
+    pfx=', '
   fi
 
   if [ "$chrome_trust" = "true" ]; then
-    _install_browser_truststore "$index" "chrome"
+    _install_browser_truststore "$ca_name" "$index" "chrome" "$ca_cert_path"
     trusts="${trusts}${pfx}Chrome/Brave"
+  fi
+
+  # save to data.json if used as command
+  if [ -z "$3" ] && { [ "$ca_storage_type" = "server" ] || [ "$ca_storage_type" = "client" ]; }; then
+    add_to_ssl_certs "$index" "trusts" "$trusts"
+  elif [ -z "$3" ] && [ "$ca_storage_type" = "root" ]; then
+    add_to_ca_database "rootCAs" "$index" "trusts" "$trusts"
+  elif [ -z "$3" ] && [ "$ca_storage_type" = "intermediate" ]; then
+    add_to_ca_database "intermediateCAs" "$index" "trusts" "$trusts"
   fi
 
   status=$?
