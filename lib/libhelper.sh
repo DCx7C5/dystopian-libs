@@ -251,7 +251,7 @@ cleanup_dcrypto_files() {
   echod "  cleanup_non_ca_keys: $cleanup_non_ca_keys"
   echod "      cleanup_dry_run: $cleanup_dry_run"
   echod "         keep_backups: $keep_backups"
-  echod "               DC_DIR: $DC_DIR"
+  echod "            DC_CFGDIR: $DC_CFGDIR"
   echod "                DC_DB: $DC_DB"
 
   echoi "dystopian-crypto Cleanup${cleanup_dry_run:+$([ "$cleanup_dry_run" = "true" ] && echo "DRY RUN")}"
@@ -280,7 +280,7 @@ cleanup_dcrypto_files() {
   if [ "$cleanup_orphaned" = "true" ]; then
     echoi "Finding orphaned files..."
     tmpfile_orphaned=$(mktemp) || { echoe "Failed to create temporary import_file for orphaned files"; return 1; }
-    find "$DC_DIR" -type f \( -name "*.pem" -o -name "*.csr" -o -name "*.conf" -o -name "*.salt" -o -name "*.srl" \) > "$tmpfile_orphaned"
+    find "$DC_CFGDIR" -type f \( -name "*.pem" -o -name "*.csr" -o -name "*.conf" -o -name "*.salt" -o -name "*.srl" \) > "$tmpfile_orphaned"
     found_orphaned=false
     while read -r import_file; do
       file_path="$(realpath "$import_file")"
@@ -330,7 +330,7 @@ cleanup_dcrypto_files() {
   if [ "$cleanup_backups" = "true" ]; then
     echoi "Cleaning up backup files..."
     tmpfile_backups=$(mktemp) || { echoe "Failed to create temporary import_file for backup files"; return 1; }
-    find "$DC_DIR" -type f \( -name "*bkp*" -o -name "cert.[0-9]*.csr" \) > "$tmpfile_backups"
+    find "$DC_CFGDIR" -type f \( -name "*bkp*" -o -name "cert.[0-9]*.csr" \) > "$tmpfile_backups"
     found_backups=false
     while IFS= read -r backup_file < "$tmpfile_backups"; do
       found_backups=true
