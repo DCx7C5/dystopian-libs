@@ -462,8 +462,14 @@ _create_and_verify_cert() {
   extensions="$8"
   days="$9"
   ca_index="${10:-$(find_ca_index_by_key_value "cert" "$ca_cert_file")}"
-  _ca_name="${11:-$(get_value_from_ca_index "$ca_index" "name")}"
-  ca_fullchain="${12:-$(get_value_from_ca_index "$ca_index" "fullchain")}"
+  _ca_name="${11:-$(get_value_from_index "$ca_index" "name")}"
+  ca_type="$(get_value_from_index "$ca_index" "type")"
+
+  if [ "$ca_type" = "intermediate" ]; then
+    ca_fullchain="${12:-$(get_value_from_ca_index "$ca_index" "fullchain")}"
+  else
+    ca_fullchain="${12:-$(get_value_from_ca_index "$ca_index" "cert")}"
+  fi
 
   passdbg=$({ [ "${6}" = "gui" ] || [ "${6}" = "GUI" ]; } && echo "[GUI]")
   passdbg=$({ [ -n "${6}" ]  && [ ! -f "${6}" ]; } && echo "[SET]" || echo "${6}")
@@ -902,7 +908,8 @@ create_certificate_authority() {
   set_as_defaultRoot="${25:-false}"
 
   use_rsa="${27:-false}"
-  install_trust="${28:-false}"
+  install_trusts="${28:-}"
+
 
   echod "Starting create_certificate_authority with parameters:"
   echod "           ca_name: $ca_name"
@@ -930,6 +937,7 @@ create_certificate_authority() {
   echod "      root_ca_salt: $([ -n "$root_ca_salt" ] && echo "[SET]" || echo "[EMPTY]")"
   echod "     fullchain_out: $fullchain_out"
   echod "           use_rsa: $use_rsa"
+  echod "    install_trusts: $install_trusts"
 
   # Validate root CA parameters for intermediate CA
   if [ "$intermediate" = "true" ]; then
@@ -1025,8 +1033,8 @@ create_certificate_authority() {
     echosv "Creating and verifying CSR successful"
 
     # Create cert and verify
-    echod "Calling _create_and_verify_cert with: $ca_cert_out, $ca_csr_out, $ca_conf_out, $root_ca_key, $root_ca_cert, ${root_ca_pass:-"ROOT CA PASS"}, ${root_ca_salt:-"ROOT_CA_SALT"}, v3_ca, $days"
-    if ! _create_and_verify_cert "$ca_cert_out" "$ca_csr_out" "$ca_conf_out" "$root_ca_key" "$root_ca_cert" "$root_ca_pass" "$root_ca_salt" "v3_ca" "$days"; then
+    echod "Calling _create_and_verify_cert with: $ca_cert_out, $ca_csr_out, $ca_conf_out, $root_ca_key, $root_ca_cert, ${root_ca_pass:-"ROOT CA PASS"}, ${root_ca_salt:-"ROOT_CA_SALT"}, v3_ca, $days, \"\", \"\", $fullchain_out"
+    if ! _create_and_verify_cert "$ca_cert_out" "$ca_csr_out" "$ca_conf_out" "$root_ca_key" "$root_ca_cert" "$root_ca_pass" "$root_ca_salt" "v3_ca" "$days" "" "" ""; then
       echoe "Failed to sign intermediate CA certificate"
       return 1
     fi
@@ -1049,6 +1057,15 @@ create_certificate_authority() {
     else
       echow "Calling _create_and_verify_fullchain $cert_out $fullchain_out failed."
     fi
+
+  fi
+
+  if [ -n "$install_trusts" ]; then
+    trusts=
+    install_truststore "$ca_name" "$install_trusts" "$ca_cert_out" || {
+      echoe "Error installing to NSS databases or system-wide trust."
+      return 1
+    }
   fi
 
   # Register CA in database
@@ -1090,11 +1107,15 @@ create_certificate_authority() {
     add_to_ca_database "$ca_storage_type" "$index" "kdf" "pbkdf2"
   fi
 
+  # Store algorithm information
   if [ "$use_rsa" = "true" ]; then
     add_to_ca_database "$ca_storage_type" "$index" "algo" "RSA"
   else
     add_to_ca_database "$ca_storage_type" "$index" "algo" "EC"
   fi
+
+  #
+  add_to_ca_database "$ca_storage_type" "$index" "trusts" "$trusts"
 
   # Set as default CA if first root CA
   if ! has_defaultRootCA || [ "$set_as_defaultRoot" = "true" ]; then
@@ -1360,7 +1381,7 @@ sign_certificate_request() {    # sign CSR
 
   echod "Calling _create_and_verify_cert $cert_out $csr_file $config_file $ca_key_file $ca_cert_file $ca_pass $ca_salt"
   _create_and_verify_cert "$cert_out" "$csr_file" "$config_file" "$ca_key_file" \
-    "$ca_cert_file" "$ca_pass" "$ca_salt" "req_ext" 1 || {
+    "$ca_cert_file" "$ca_pass" "$ca_salt" "req_ext" "$validity_days" "" "" "" || {
       echoe "Failed signing CSR and creating certificate"
       return 1
   }
