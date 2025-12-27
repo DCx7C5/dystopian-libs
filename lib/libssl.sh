@@ -502,6 +502,7 @@ _create_and_verify_cert() {
                   -CAkey "$ca_key_file" \
                   -CAcreateserial \
                   -out "$cert_out" \
+                  -days "$days" \
                   -extensions "$extensions" \
                   -extfile "$config_file" \
                   -passin stdin 2>/dev/null; then
@@ -519,6 +520,7 @@ _create_and_verify_cert() {
                   -CAkey "$ca_key_file" \
                   -CAcreateserial \
                   -out "$cert_out" \
+                  -days "$days" \
                   -extensions "$extensions" \
                   -extfile "$config_file" \
                   -passin stdin 2>/dev/null; then
@@ -536,6 +538,7 @@ _create_and_verify_cert() {
                    -CAkey "$ca_key_file" \
                    -CAcreateserial \
                    -out "$cert_out" \
+                   -days "$days" \
                    -extensions "$extensions" \
                    -extfile "$config_file" 2>/dev/null; then
         echoe "Failed to sign CSR"
@@ -875,7 +878,6 @@ create_certificate_authority() {
   locality="${14:-}"
   organization="${15:-}"
   orgunit="${16:-}"
-  days="${17:-3650}"
 
   if [ "$intermediate" = "true" ]; then
     root_ca_index="${18:+$(echo "${18}" | sed -e 's/\ /\_/g' -e 's/\-/\_/g' | tr "[:upper:]" "[:lower:]")}"
@@ -902,7 +904,10 @@ create_certificate_authority() {
 
     fullchain_out="${26:+$(absolutepathidx "${26}" "$index")}"
     fullchain_out="${26:-$(absolutepathidx "${DC_CA}/fullchain.pem" "$index")}"
+    days="${17:-1095}"
   fi
+
+  days="${days:-"${17:-3650}"}"
 
   set_as_default="${24:-false}"
   set_as_defaultRoot="${25:-false}"
@@ -1089,7 +1094,7 @@ create_certificate_authority() {
   add_to_ca_database "$ca_storage_type" "$index" "fingerprint" "$fingerprint"
 
   # Store type (for exports)
-  add_to_ca_database $ca_storage_type "$index" "type" "$ca_storage_type"
+  add_to_ca_database "$ca_storage_type" "$index" "type" "$ca_storage_type"
 
   # Store salt if was created
   if [ -n "$ca_pass" ] && [ -n "$ca_salt_out" ]; then
@@ -1815,54 +1820,73 @@ _revoke_certificate() {
 
 
 verify_certificate_or_key() {
-  cert_file="$1"
-  ca_cert="$2"
-  check_expiry="$3"
+  name_cert="$1"
+  caname_cacert="$2"
+  check_expiry="${3:-true}"
 
   # Validate input files exist
-  if [ ! -f "$cert_file" ]; then
-    echoe "Certificate file '$cert_file' does not exist"
-    return 1
+  if [ ! -f "$name_cert" ]; then
+    if ! has_index "$name_cert"; then
+      echoe "Certificate file from $1 does not exist"
+      return 1
+    fi
   fi
 
-  if [ ! -f "$ca_cert" ]; then
-    cert_index="$(find_certs_index_by_key_value "cert" "$cert_file")"
-    ca_index="$(get_value_from_certs_index "$cert_index" "issuer")"
-    ca_cert="$(get_value_from_ca_index "$ca_index" "cert")"
-    [ -z "$ca_cert" ] && echoe "No CA certificate found" && return 1
+  if [ ! -f "$caname_cacert" ]; then
+    if ! has_index "$caname_cacert"; then
+      echoe "Certificate CA file from $2 does not exist"
+      return 1
+    fi
+  fi
+
+
+  if [ -f "$name_cert" ]; then
+    cert="$name_cert"
+    index="$(find_certs_index_by_key_value "cert" "$cert")"
+  elif [ -n "$name_cert" ] && [ ! -f "$name_cert" ] ; then
+    index="$(echo "$name_cert" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")"
+    cert="$(get_value_from_index "$index" "cert")"
+  fi
+
+  if [ -f "$caname_cacert" ]; then
+    cacert="$caname_cacert"
+    caindex="$(find_certs_index_by_key_value "cert" "$cacert")"
+  elif [ -n "$caname_cacert" ] && [ ! -f "$caname_cacert" ] ; then
+    caindex="$(echo "$caname_cacert" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")"
+    cacert="$(get_value_from_index "$caindex" "cert")"
   fi
 
   # Validate files are actually certificates
-  echod "Calling openssl x509 -in \"$cert_file\" -noout -text"
-  if ! openssl x509 -in "$cert_file" -noout -text >/dev/null 2>&1; then
-    echoe "'$cert_file' is not a valid certificate"
+  echod "Calling openssl x509 -in \"$cert\" -noout -text"
+  if ! openssl x509 -in "$cert" -noout -text >/dev/null 2>&1; then
+    echoe "'$cert' is not a valid certificate"
     return 1
   fi
 
-  if ! openssl x509 -in "$ca_cert" -noout -text >/dev/null 2>&1; then
-    echoe "'$ca_cert' is not a valid CA certificate"
+  if ! openssl x509 -in "$cacert" -noout -text >/dev/null 2>&1; then
+    echoe "'$cacert' is not a valid CA certificate"
     return 1
   fi
 
   # Get certificate details for reporting
-  cert_subject=$(openssl x509 -in "$cert_file" -noout -subject | sed 's/subject=//')
-  cert_issuer=$(openssl x509 -in "$cert_file" -noout -issuer | sed 's/issuer=//')
-  ca_subject=$(openssl x509 -in "$ca_cert" -noout -subject | sed 's/subject=//')
+  cert_subject=$(openssl x509 -in "$cert" -noout -subject | sed 's/subject=//')
+  cert_issuer=$(openssl x509 -in "$cert" -noout -issuer | sed 's/issuer=//')
+  ca_subject=$(openssl x509 -in "$cacert" -noout -subject | sed 's/subject=//')
 
   # Check if certificate is expired or will expire soon
   if [ "$check_expiry" = "true" ]; then
-    if ! openssl x509 -in "$cert_file" -noout -checkend 0 >/dev/null 2>&1; then
-      echow "Certificate '$cert_file' has expired"
-    elif ! openssl x509 -in "$cert_file" -noout -checkend 2592000 >/dev/null 2>&1; then
-      echow "Certificate '$cert_file' expires within 30 days"
+    if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1; then
+      echow "Certificate '$cert' has expired"
+    elif ! openssl x509 -in "$cert" -noout -checkend 2592000 >/dev/null 2>&1; then
+      echow "Certificate '$cert' expires within 30 days"
     fi
   fi
 
   # Verify certificate chain
-  verification_output=$(openssl verify -CAfile "$ca_cert" "$cert_file" 2>&1)
+  verification_output=$(openssl verify -CAfile "$cacert" "$cert" 2>&1)
 
   if [ $? -eq 0 ]; then
-    echosv "Certificate verification successful: $cert_file"
+    echosv "Certificate verification successful: $cert"
 
     echov "Certificate Details:"
     echov "    Subject: $cert_subject"
@@ -1870,15 +1894,15 @@ verify_certificate_or_key() {
     echov "    CA Subject: $ca_subject"
 
     # Show validity dates
-    valid_from_raw=$(openssl x509 -in "$cert_file" -noout -startdate | sed 's/notBefore=//')
-    valid_until_raw=$(openssl x509 -in "$cert_file" -noout -enddate | sed 's/notAfter=//')
+    valid_from_raw=$(openssl x509 -in "$cert" -noout -startdate | sed 's/notBefore=//')
+    valid_until_raw=$(openssl x509 -in "$cert" -noout -enddate | sed 's/notAfter=//')
     echov ""
     echov "Validity Period:"
     echov "    not before: $valid_from_raw"
     echov "    not after: $valid_until_raw"
 
     # Show SAN if present
-    san=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1)
+    san=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1)
     if [ -n "$san" ]; then
       echov ""
       echov "Subject Alternative Names:"
@@ -1886,7 +1910,7 @@ verify_certificate_or_key() {
     fi
 
     # Show key usage
-    key_usage=$(openssl x509 -in "$cert_file" -noout -ext keyUsage 2>/dev/null | grep -A1 "Key Usage" | tail -n1)
+    key_usage=$(openssl x509 -in "$cert" -noout -ext keyUsage 2>/dev/null | grep -A1 "Key Usage" | tail -n1)
     if [ -n "$key_usage" ]; then
       echov ""
       echov "Key Usage:"
@@ -1894,7 +1918,7 @@ verify_certificate_or_key() {
     fi
 
     # Show extended key usage
-    ext_key_usage=$(openssl x509 -in "$cert_file" -noout -ext extendedKeyUsage 2>/dev/null | grep -A1 "Extended Key Usage" | tail -n1)
+    ext_key_usage=$(openssl x509 -in "$cert" -noout -ext extendedKeyUsage 2>/dev/null | grep -A1 "Extended Key Usage" | tail -n1)
     if [ -n "$ext_key_usage" ]; then
       echov ""
       echov "Extended Key Usage:"
@@ -1902,7 +1926,7 @@ verify_certificate_or_key() {
     fi
 
   else
-    echow "Certificate verification failed: $cert_file"
+    echow "Certificate verification failed: $cert"
     echow "Error details: $verification_output"
 
     # Try to provide more specific error information
@@ -1971,7 +1995,7 @@ ssl_encrypt() (
     fi
   else
     if [ -n "$password" ]; then
-         echowv "Warning: --password is ignored for symmetric encryption."
+         echowv "--password is ignored for symmetric encryption."
     fi
 
     if [ -z "$cert_file" ]; then
@@ -1990,7 +2014,7 @@ ssl_encrypt() (
       return 1
     fi
 
-    if ! openssl pkeyutl -encrypt -pubin -inkey "$cert_file" -in "$input" -out "$chain_out"; then
+    if ! openssl pkeyutl -encrypt -pubin -inkey "$cert_file" -in "$input" -out ""; then
       echoe "Asymmetric encryption failed."
       return 1
     fi
@@ -2055,13 +2079,13 @@ ssl_decrypt() (
             # Pipe the output of the KDF directly to OpenSSL for the key's password.
             # Note: This assumes the private key was created using a password processed by the same KDF.
             if ! { _create_argon2id_derived_key_pw "$password" | \
-                   openssl pkeyutl -decrypt -inkey "$key_file" -in "$input" -out "$chain_out" -passin stdin; }; then
+                   openssl pkeyutl -decrypt -inkey "$key_file" -in "$input" -out "" -passin stdin; }; then
                 echoe "Asymmetric decryption failed. Check your private key and password."
                 return 1
             fi
         else
             # No password provided for the key.
-            if ! openssl pkeyutl -decrypt -inkey "$key_file" -in "$input" -out "$chain_out"; then
+            if ! openssl pkeyutl -decrypt -inkey "$key_file" -in "$input" -out ""; then
                 echoe "Asymmetric decryption failed. Check your private key."
                 return 1
             fi

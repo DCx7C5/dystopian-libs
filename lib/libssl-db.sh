@@ -397,8 +397,10 @@ add_to_ca_database() {
   key="$3"
   value="$4"
 
-  [ "$1" = "root" ] && storage_type="rootCAs"
-  [ "$1" = "intermediate" ] && storage_type="intermediateCAs"
+  case "$1" in
+    root|rootCAs) storage_type="rootCAs";;
+    intermediate|intermediateCAs) storage_type="intermediateCAs";;
+  esac
 
   temp_file=$(mktemp -- "${DC_DB}.XXXXXXX") || {
     echoe "Failed creating temporary database file"
@@ -427,18 +429,23 @@ add_to_ca_database() {
 
 has_index() {
   if [ $# -eq 2 ]; then
-    jq -e \
+    if jq -e \
        --arg idx "$1" \
        --arg typ "$2" \
-       '.ssl.certs[$idx]? // empty | (type == "object")' -- "$DC_DB" >/dev/null 2>&1
+       '.ssl.certs[$idx]? // empty | (type == "object")' -- "$DC_DB" >/dev/null 2>&1; then
+      return 0
+    fi
   elif [ $# -eq 1 ]; then
-    jq -e \
+    if jq -e \
        --arg idx "$1" \
        '.ssl.certs[$idx]? //
         .ssl.rootCAs[$idx]? //
         .ssl.intermediateCAs[$idx]? //
-        empty | (type == "object")' -- "$DC_DB" >/dev/null 2>&1
+        empty | (type == "object")' -- "$DC_DB" >/dev/null 2>&1; then
+      return 0
+    fi
   fi
+  return 1
 }
 
 
@@ -554,7 +561,8 @@ get_cert_type() {
   case "$ct" in
     intermediate) ct="intermediateCAs" ;;
     root) ct="rootCAs" ;;
-    client|server|*) ct="certs";;
+    client|server) ct="certs";;
+    *) ct=;;
   esac
   echo "$ct"
 }
@@ -566,21 +574,31 @@ delete_ssl_index() {
     return 1
   }
   cert_type="$(get_cert_type "$1")"
-  if [ -z "$cert_type" ]; then
-    echoe "Couldn't determine cert type or index doesn't exist"
-    return 1
+  if [ -n "$cert_type" ]; then
+    if ! jq -e \
+            --arg idx "$1" \
+            --arg ctype "$cert_type" \
+            'del(.ssl[$ctype][$idx])' -- "$DC_DB" > "$temp_file"; then
+      echoe "Something went wrong while deleting the index."
+      return 1
+    fi
   fi
-  echoe "$cert_type"
-  if ! jq -e --arg idx "$1" --arg ctype "$cert_type" \
-        'del(.ssl[$ctype][$idx])' -- "$DC_DB" > "$temp_file";then
-    echoe "Something went wrong while deleting the index."
-    return 1
-  fi
-
   mv -- "$temp_file" "$DC_DB" || {
     echoe "Not able to save temporary db as database file."
     rm -f -- "$temp_file"
     return 1
   }
+  return 0
+}
+
+is_installed_in_trusts() {
+  :
+}
+
+get_all_indices() {
+  if ! jq -r '.ssl.rootCAs + .ssl.intermediateCAs + .ssl.certs | to_entries[] | .key' -- "$DC_DB"; then
+    echoe "Failed fetching all indices from $DC_DB"
+    return 1
+  fi
   return 0
 }
