@@ -908,7 +908,8 @@ create_certificate_authority() {
   set_as_defaultRoot="${25:-false}"
 
   use_rsa="${27:-false}"
-  install_trusts="${28:-}"
+  stores="${28:-}"
+
 
 
   echod "Starting create_certificate_authority with parameters:"
@@ -937,7 +938,7 @@ create_certificate_authority() {
   echod "      root_ca_salt: $([ -n "$root_ca_salt" ] && echo "[SET]" || echo "[EMPTY]")"
   echod "     fullchain_out: $fullchain_out"
   echod "           use_rsa: $use_rsa"
-  echod "    install_trusts: $install_trusts"
+  echod "            stores: $stores"
 
   # Validate root CA parameters for intermediate CA
   if [ "$intermediate" = "true" ]; then
@@ -1060,16 +1061,7 @@ create_certificate_authority() {
 
   fi
 
-  if [ -n "$install_trusts" ]; then
-    trusts=
-    install_truststore "$ca_name" "$install_trusts" "$ca_cert_out" || {
-      echoe "Error installing to NSS databases or system-wide trust."
-      return 1
-    }
-  fi
-
   # Register CA in database
-  echod "Registering CA in database..."
   add_to_ca_database "$ca_storage_type" "$index" "key" "$ca_key_out"
   add_to_ca_database "$ca_storage_type" "$index" "cert" "$ca_cert_out"
 
@@ -1114,15 +1106,13 @@ create_certificate_authority() {
     add_to_ca_database "$ca_storage_type" "$index" "algo" "EC"
   fi
 
-  #
-  add_to_ca_database "$ca_storage_type" "$index" "trusts" "$trusts"
-
   # Set as default CA if first root CA
   if ! has_defaultRootCA || [ "$set_as_defaultRoot" = "true" ]; then
     echoi "Set as defaultRootCA: $index"
     set_defaultRootCA "$index"
     echosv "Setting defaultRootCA successful."
   fi
+
 
   if { ! has_defaultCA && ! has_index "$index" "rootCAs"; } || [ "$set_as_default" = "true" ]; then
     defaultRootCA=$(get_defaultRootCA)
@@ -1133,17 +1123,25 @@ create_certificate_authority() {
     fi
   fi
 
+  if [ -n "$install_trusts" ]; then
+    manage_truststore "$ca_name" "install" "$stores" || {
+      echoe "Error installing to NSS databases or system-wide trust."
+      return 1
+    }
+  fi
+
+  add_to_ca_database "$ca_storage_type" "$index" "truststores" "$stores"
+
   # Display CA information
   ca_subject=$(openssl x509 -in "$ca_cert_out" -noout -subject | sed 's/subject=//')
   ca_issuer=$(openssl x509 -in "$ca_cert_out" -noout -issuer | sed 's/issuer=//')
-  echosv ""
-  echosv "CA Details:"
-  echosv "  Issuer: $ca_issuer"
-  echosv "  Subject: $ca_subject"
-  echosv "  Serial: $serial"
-  echosv "  Valid from: $valid_from"
-  echosv "  Valid until: $valid_until"
-  echosv ""
+
+  echov "CA Details:"
+  echov "  Issuer: $ca_issuer"
+  echov "  Subject: $ca_subject"
+  echov "  Serial: $serial"
+  echov "  Valid from: $valid_from"
+  echov "  Valid until: $valid_until"
   echos "Certificate Authority $ca_name created successfully"
   return 0
 }
@@ -1273,7 +1271,7 @@ create_certificate_signing_request() {
 }
 
 
-sign_certificate_request() {    # sign CSR
+sign_certificate_request() {
   if ! has_defaultRootCA && ! has_defaultCA; then
     echoe "No root or intermediate CAs found"
     echow "Create a certificate authority before trying to sign any CSRs!"
@@ -1318,7 +1316,7 @@ sign_certificate_request() {    # sign CSR
   fullchain_out="${13:+$(absolutepathidx "${13}" "$index")}"
   fullchain_out="${13:-$(absolutepathidx "${DC_CERT}/fullchain.pem" "$index")}"
 
-  use_rsa="${14:-false}"
+  stores="${15:-}"
 
   # Check for default CA if no CA params set
   [ -z "$ca_index" ] && ca_index="$(find_defaultCA)"
@@ -1426,6 +1424,15 @@ sign_certificate_request() {    # sign CSR
   else
     echow "Calling _create_and_verify_fullchain $cert_out $fullchain_out failed."
   fi
+
+  # Install to trust databases if parameters passed
+  if [ -n "$stores" ]; then
+    manage_truststore "$ca_name" "install" "$stores" || {
+      echoe "Error installing to NSS databases or system-wide trust."
+      return 1
+    }
+  fi
+  add_to_ssl_certs "$index" "truststores" "$stores"
 
   # Cleanup CSR and config files based on keep flags
   echov "Cleaning up temporary files"

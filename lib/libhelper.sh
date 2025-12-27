@@ -139,7 +139,7 @@ reset_dystopian_crypto() {
     fi
 
     if [ -n "$ssl" ] && [ "$ssl" = "true" ]; then
-      if askyesno "Last WARNING! Answering yes will reset everything SSL related in $DC_CFGDIR & $DC_DB" "N"; then
+      if askyesno "Last WARNING! Answering yes will delete everything SSL related in $DC_CFGDIR & $DC_DB" "N"; then
         rm -rf -- "${DC_CA}" "${DC_CERT}" "${DC_CRL}" 2>/dev/null || {
             echoe "Problem resetting dystopian-crypto ssl"
             exit 1
@@ -151,6 +151,9 @@ reset_dystopian_crypto() {
         set_permissions_and_owner "$DC_CFGDIR" 750
         set_permissions_and_owner "$DC_KEY" 700
         set_permissions_and_owner "$DC_CAKEY" 700
+        for i in $(get_all_indices); do
+          manage_truststore "$i" "uninstall"
+        done
         reset_ssl_index
         echos "Reset of dystopian-crypto SSL successful"
       else
@@ -159,7 +162,7 @@ reset_dystopian_crypto() {
       fi
     fi
     if [ -n "$gpg" ] && [ "$gpg" = "true" ]; then
-      if askyesno "Last WARNING! Answering yes will reset everything GPG related in $DC_GNUPG & $DC_DB" "N"; then
+      if askyesno "Last WARNING! Answering yes will delete everything GPG related in $DC_GNUPG & $DC_DB" "N"; then
         rm -rf -- "${DC_GNUPG}" 2>/dev/null || {
           echoe "Problem resetting dystopian-crypto GPG"
           exit 1
@@ -260,11 +263,12 @@ cleanup_dcrypto_files() {
   # Clean specific index
   if [ -n "$cleanup_index" ]; then
     echoi "Cleaning up specific index: $cleanup_index"
-    if ! jq -e --arg idx "$cleanup_index" '.ssl[] | to_entries[] | select(.key == $idx)' -- "$DC_DB" >/dev/null 2>&1; then
+    if ! has_index "$cleanup_index"; then
       echoe "Index $cleanup_index does not exist in $DC_DB"
       return 1
     fi
     if [ "$cleanup_dry_run" != "true" ]; then
+      manage_truststore "$cleanup_index" "uninstall"
       delete_ssl_index "$cleanup_index" || {
           echoe "Failed to clean index $cleanup_index"
           return 1
@@ -1191,7 +1195,6 @@ format_storage() {
 }
 
 
-
 usb_storage_missing() {
   counter=0
   counter_max="${COUNTER_MAX:-5}"
@@ -1215,178 +1218,309 @@ usb_storage_missing() {
   done
 }
 
+_manage_system_truststore() {
+    index="$1"
+    type="$2"
+    ck_path="$3"
+    process="$4"
+    perms="444"
 
-_install_system_truststore() {
-  index="$1"
-  type="${2:-cert}"
-  ck_path="$3"
-  perms=444
+    if [ "$type" != "cert" ]; then
+        echoe "Only cert type supported"
+        return 1
+    fi
 
-  [ "$type" = "key" ] && perms=400
+    # Consistent filename: index.crt
+    slug="$index.crt"
+    ts_anchors="/etc/ca-certificates/trust-source/anchors"
 
-  if [ "$type" != "cert" ] && [ "$type" != "key" ]; then
-    echoe "type must be either cert or key"
+    if [ "$process" = "install" ]; then
+        echoi "Installing certificate into system trust store..."
+
+        # Preferred modern way: trust anchor --store (works on Arch, Fedora, etc.)
+        if command -v trust >/dev/null 2>&1; then
+            if trust anchor --store "$ck_path" >/dev/null 2>&1; then
+                echosv "Certificate installed from system trust database via 'trust anchor' (p11-kit)."
+                return 0
+            else
+                echow "'trust anchor --store' failed, falling back to manual placement."
+            fi
+        fi
+
+        # Manual fallback for p11-kit systems (Arch, etc.)
+        if [ -d "$ts_anchors" ]; then
+            echov "Detected p11-kit anchors directory (e.g. Arch Linux)."
+            ts_path="$ts_anchors/$slug"
+            cp "$ck_path" "$ts_path" || { echoe "Failed to copy certificate"; return 1; }
+            set_permissions_and_owner "$ts_path" "$perms"
+            if trust extract-compat; then
+                echosv "Certificate installed in system trust database (manual p11-kit)."
+                return 0
+            else
+                echoe "Failed to run 'trust extract-compat'"
+                return 1
+            fi
+
+        # Debian/Ubuntu fallback
+        elif [ -d /usr/local/share/ca-certificates ]; then
+            echov "Detected Debian/Ubuntu style trust store."
+            ts_path="/usr/local/share/ca-certificates/$slug"
+            cp "$ck_path" "$ts_path" || { echoe "Failed to copy certificate"; return 1; }
+            set_permissions_and_owner "$ts_path" "$perms"
+            if update-ca-certificates; then
+                echosv "Certificate installed in system trust database (Debian/Ubuntu)."
+                return 0
+            else
+                echoe "Failed to run 'update-ca-certificates'"
+                return 1
+            fi
+
+        else
+            echow "No recognized system trust store found. Skipping system-wide install."
+            echow "Applications may still trust via NSS or p11-kit."
+            return 1
+        fi
+
+    elif [ "$process" = "uninstall" ]; then
+        echoi "Uninstalling certificate from system trust store..."
+        removed=0
+
+        # Preferred: trust anchor --remove
+        if command -v trust >/dev/null 2>&1; then
+            if trust anchor --remove "$ck_path" >/dev/null 2>&1; then
+                echosv "Certificate uninstalled from system trust store via 'trust anchor --remove'."
+                return 0
+            fi
+        fi
+
+        # Manual removal
+        if [ -d "$ts_anchors" ]; then
+            echov "Detected p11-kit anchors directory."
+            ts_path="$ts_anchors/$slug"
+            if [ -f "$ts_path" ]; then
+                rm -f "$ts_path"
+                echov "Removed $ts_path"
+                removed=1
+            fi
+            if trust extract-compat; then
+                if [ "$removed" = 1 ]; then
+                    echosv "Certificate uninstalled from system trust store (manual p11-kit)."
+                fi
+            else
+                echoe "Failed to run 'trust extract-compat'"
+                return 1
+            fi
+
+        elif [ -d /usr/local/share/ca-certificates ]; then
+            echov "Detected Debian/Ubuntu style."
+            ts_path="/usr/local/share/ca-certificates/$slug"
+            if [ -f "$ts_path" ]; then
+                rm -f "$ts_path"
+                echov "Removed $ts_path"
+                removed=1
+            fi
+            if update-ca-certificates --fresh; then
+                if [ "$removed" = 1 ]; then
+                    echosv "Certificate uninstalled from system trust store (Debian/Ubuntu)."
+                fi
+            else
+                echoe "Failed to run 'update-ca-certificates'"
+                return 1
+            fi
+
+        else
+            echow "No recognized system trust store found. Assuming already uninstalled."
+            return 1
+        fi
+
+        if [ "$removed" = 0 ]; then
+            echow "Certificate not found in system trust store – assuming already uninstalled."
+        fi
+        echosv "Uninstallation from system trust store completed"
+
+    else
+        echoe "Invalid process: $process"
+        return 1
+    fi
+}
+
+_manage_browser_truststore() {
+    name="$1"
+    index="$2"
+    trust_type="$3"   # "firefox" or "chrome"
+    ck_path="$4"
+    process="$5"
+    removed=0
+
+    if [ "$process" = "install" ]; then
+
+        if [ "$trust_type" = "firefox" ] && [ -d "/home/${DYSTOPIAN_USER}/.mozilla/firefox" ]; then
+            for profile_dir in "/home/${DYSTOPIAN_USER}/.mozilla/firefox"/*/; do
+                # Check if directory exists and has a cert db
+                if [ -f "${profile_dir}cert9.db" ] || [ -f "${profile_dir}cert8.db" ]; then
+                    if certutil -d sql:"$profile_dir" -A -t "C,," -n "$name" -i "$ck_path" >/dev/null 2>&1; then
+                        echosv "Updated Firefox profile: $(basename "$profile_dir")"
+                        removed=$((removed + 1))
+                    fi
+                fi
+            done
+        fi
+
+        if [ "$trust_type" = "chrome" ] && [ -d "/home/${DYSTOPIAN_USER}/.pki/nssdb" ]; then
+            if certutil -d sql:"/home/${DYSTOPIAN_USER}/.pki/nssdb" -A -t "C,," -n "$name" -i "$ck_path" >/dev/null 2>&1; then
+                echosv "Updated Chrome/Chromium/Edge/Brave NSS database."
+                removed=$((removed + 1))
+            fi
+        fi
+
+        if [ "$removed" -gt 0 ]; then
+            echov "Please fully restart all browsers for changes to take effect."
+            echosv "Certificate installation to browser trust stores successful ($removed location(s))."
+            return 0
+        else
+            echow "No compatible NSS databases found for installation."
+            return 1
+        fi
+
+    elif [ "$process" = "uninstall" ]; then
+
+        if [ "$trust_type" = "firefox" ] && [ -d "/home/${DYSTOPIAN_USER}/.mozilla/firefox" ]; then
+            for profile_dir in "/home/${DYSTOPIAN_USER}/.mozilla/firefox"/*/; do
+                if [ -f "${profile_dir}cert9.db" ] || [ -f "${profile_dir}cert8.db" ]; then
+                    if certutil -d sql:"$profile_dir" -D -n "$name" >/dev/null 2>&1; then
+                        echosv "Removed from Firefox profile: $(basename "$profile_dir")"
+                        removed=$((removed + 1))
+                    fi
+                fi
+            done
+        fi
+
+        if [ "$trust_type" = "chrome" ] && [ -d "/home/${DYSTOPIAN_USER}/.pki/nssdb" ]; then
+            if certutil -d sql:"/home/${DYSTOPIAN_USER}/.pki/nssdb" -D -n "$name" >/dev/null 2>&1; then
+                echosv "Removed from Chrome/Chromium/Edge/Brave NSS database."
+                removed=$((removed + 1))
+            fi
+        fi
+
+        if [ "$removed" -gt 0 ]; then
+            echov "Please fully restart all affected browsers for the removal to take effect."
+            echosv "Certificate removal from browser trust stores successful ($removed location(s))."
+            return 0
+        else
+            echow "Certificate '$name' not found in any targeted browser trust stores."
+            return 1
+        fi
+
+    else
+        echoe "Invalid process: $process"
+        return 2
+    fi
+}
+
+
+
+
+
+manage_truststore() {
+  ca_name="$1"
+  index=$(echo "$ca_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
+  process="$2"
+  stores="${3:-}"
+  cmd="${4:-false}"
+
+  if [ -z "$ca_name" ]; then
+    echoe "Certificate name is required"
+    return 1
+  elif [ -z "$process" ]; then
+    echoe "Management type has to be set (install/uninstall)"
     return 1
   fi
 
-
-  echoi "Installing CA certificate into system trust store..."
-  # Arch Linux: uses /etc/ca-certificates/trust-source/anchors + p11-kit
-  if [ -d /etc/ca-certificates/trust-source/anchors ]; then
-    echov "Detected Arch Linux style trust store."
-    ts_path="/etc/ca-certificates/trust-source/anchors/$(basename "${ck_path%.*}").crt"
-    cp "$ck_path" "$ts_path"
-    set_permissions_and_owner "$ts_path" "$perms"
-    trust extract-compat || {
-      echoe "Error running ´trust extract-compat´"
-      return 1
-    }
-    echosv "CA installed for Arch Linux (system-wide)."
-
-  # Debian/Ubuntu: uses /usr/local/share/ca-certificates
-  elif [ -d /usr/local/share/ca-certificates ]; then
-    echov "Detected Debian/Ubuntu style trust store."
-    ts_path="/usr/local/share/ca-certificates/$(basename "${ck_path%.*}").crt"
-    cp "$ck_path" "$ts_path"
-    set_permissions_and_owner "$ts_path" "$perms"
-    update-ca-certificates || {
-      echoe "Error running ´update-ca-certificates´"
-      return 1
-    }
-    echosv "CA installed for Debian/Ubuntu (system-wide)."
-
-  # Fallback for other distros using p11-kit (e.g., Fedora, openSUSE)
-  elif command -v trust >/dev/null 2>&1 && [ -d /etc/pki/ca-trust/source/anchors ]; then
-    echov "Detected p11-kit style trust store (e.g., Fedora)."
-    ts_path="/etc/pki/ca-trust/source/anchors/$(basename "$ck_path")"
-    cp "$ck_path" "$ts_path"
-    set_permissions_and_owner "$ts_path" "$perms"
-    update-ca-trust extract || {
-      echoe "Error running ´update-ca-trust extract´"
-      return 1
-    }
-    echosv "CA installed (p11-kit system-wide)."
-
-  else
-      echow "No recognized system trust store found. Skipping system-wide install."
-      echow "Most applications will still trust it via NSS (Chrome/Firefox)."
-      return 1
-  fi
-
-  echosv "Installation to system wide trust store successful"
-}
-
-_install_browser_truststore() {
-  name="$1"
-  index="$2"
-  trust="$3"
-  ck_path="$4"
-  installed=0
-
-  # All Firefox profiles
-  if [ "$trust" = "firefox" ] && [ -d "$HOME/.mozilla/firefox" ]; then
-      for profile_dir in "$HOME"/.mozilla/firefox/*/; do
-          if [[ -f "$profile_dir/cert9.db" || -f "$profile_dir/cert8.db" ]]; then
-              certutil -d sql:"$profile_dir" -A -t "C,," -n "$name" -i "$ck_path"
-              echosv "Updated Firefox profile: $(basename "$profile_dir")"
-              installed=$(( "$installed" + 1))
-          fi
-      done
-  else
-      echow "No Firefox profiles found. Skipping NSS database"
-  fi
-
-  # Chrome/Brave/Chromium shared NSS DB
-  if [ "$trust" = "chrome" ] && [ -d "$HOME/.pki/nssdb" ]; then
-    certutil -d sql:"$HOME/.pki/nssdb" -A -t "C,," -n "$name" -i "$ck_path"
-    echosv "Updated Chrome/Chromium/Edge NSS database."
-    installed=$(( "$installed" + 1))
-  else
-    echow "No Chrome/Brave/Chromium profiles found. Skipping NSS database"
-  fi
-
-  # Optional: Brave browser (uses its own NSS DB on some systems)
-  if { [ "$trust" = "chrome" ] || [ "$trust" = "brave" ]; } && [ -d "$HOME/.config/BraveSoftware/Brave-Browser/Default" ]; then
-    brave_nss="$HOME/.config/BraveSoftware/Brave-Browser/Default/nssdb"
-    if [ -d "$brave_nss" ]; then
-      certutil -d sql:"$brave_nss" -A -t "C,," -n "$name" -i "$ck_path" 2>/dev/null && \
-        echosv "Updated Brave NSS database."
-        installed=$(( "$installed" + 1))
-      fi
-  fi
-
-  if [ "$installed" -ne 0 ]; then
-    echosv "Please fully restart all browsers (Chrome, Chromium, Edge, Firefox, Brave) for the changes to take effect."
-    echosv "Installation to browser trust stores successful"
-    return 0
-  else
-    echow "No NSS databases or Browser trust stores found"
-  fi
-}
-
-install_truststore() {
-  ca_name="$1" && [ -z "$1" ] && echoe "CA name is required" && return 1
-  index="${ca_name:+$(echo "$ca_name" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
-  ca_cert_path="${3:-$(get_value_from_index "$index" "cert")}"
-  ca_storage_type="$(get_value_from_index "$index" "type")"
-  trusts=
-  pfx=
-
-  if echo "$2" | grep -qi "sys" 2>/dev/null 2>&1; then
-    system_trust="true"
-  fi
-  if echo "$2" | grep -qi "fire" 2>/dev/null 2>&1; then
-    firefox_trust="true"
-  fi
-  if echo "$2" | grep -qiE "chrome|brave" 2>/dev/null 2>&1; then
-    chrome_trust="true"
-  fi
-
-  # Check user for trust ownership
-  if { [ "$firefox_trust" = "true" ] || [ "$chrome_trust" = "true" ]; } && [ "$DYSTOPIAN_USER" = "root" ]; then
-    echoe "Installing to browser trust not possible, either execute with --user <USER> or execute with sudo!"
+  ca_cert_path=$(get_value_from_index "$index" "cert")
+  if [ -z "$ca_cert_path" ]; then
+    echoe "Certificate path not found for index $index"
     return 1
   fi
 
-  # certutil binary check
+  ca_stor_type=$(get_value_from_index "$index" "type")
+  case "$index" in
+    "$ca_name") ca_name=$(get_value_from_index "$index" "name") ;;
+  esac
+
+  echod "Starting install_truststore with parameters:"
+  echod "            index: $index"
+  echod "          ca_name: $ca_name"
+  echod "          process: $process"
+  echod "           stores: $stores"
+  echod "     ca_cert_path: $ca_cert_path"
+  echod "     ca_stor_type: $ca_stor_type"
+
+  if [ "$process" = "uninstall" ] && [ -z "$stores" ]; then
+    stores=$(get_value_from_index "$index" "truststores")
+    if [ -z "$trustdbs" ]; then
+      echod "Certificate with index: $index not found in any truststores"
+      return 0
+    fi
+  elif [ "$process" = "install" ] && [ -z "$stores" ]; then
+    stores="system,chrome,firefox"
+  fi
+
+  case "$stores" in
+    *[Ff][Ii][Rr][Ee]*|*[Ff][Oo][Xx]*|*[Cc][Hh][Rr][Oo][Mm][Ee]*)
+      [ "$DYSTOPIAN_USER" = "root" ] && \
+        echoe "Browser trust requires non-root user (use --user when logged in as root, or use sudo)" && \
+        return 1
+        ;;
+  esac
+
   if ! command -v certutil >/dev/null 2>&1; then
-    echoe "certutil not found (from package nss / nss-tools / libnss3-tools)."
+    echoe "certutil not found (nss-tools required)"
     return 1
   fi
 
-  if [ "$system_trust" = "true" ]; then
-    _install_system_truststore "$index" "cert" "$ca_cert_path"
-    trusts="System Wide"
-    pfx=', '
-  fi
+  if [ "$process" = "install" ] || [ "$process" = "uninstall" ]; then
+    oldIFS=$IFS status=0 IFS=,
+    for i in $trustdbs; do
+      case "$i" in
+        *[Ss][Yy][Ss]*)
+          _manage_system_truststore "$index" "cert" "$ca_cert_path" "$process"
+          case $? in 0) : ;; *) status=1;; esac
+          ;;
+        *[Cc][Hh][Rr][Oo][Mm][Ee]*)
+          _manage_browser_truststore "$ca_name" "$index" "chrome" "$ca_cert_path" "$process"
+          case $? in 0) : ;; *) status=1 ;; esac
+          ;;
+        *[Ff][Ii][Rr][Ee]*|*[Ff][Oo][Xx]*)
+          _manage_browser_truststore "$ca_name" "$index" "firefox" "$ca_cert_path" "$process"
+          case $? in 0) : ;; *) status=1 ;; esac
+          ;;
+      esac
+    done
+    IFS=$oldIFS
 
-  if [ "$firefox_trust" = "true" ]; then
-    _install_browser_truststore "$ca_name" "$index" "firefox" "$ca_cert_path"
-    trusts="${trusts}${pfx}Firefox"
-    pfx=', '
-  fi
+    # Update data.json if called as command (original logic)
+    if [ "$cmd" = true ]; then
+      [ "$process" = "install" ] && value="$stores" || value=""
+      case "$ca_stor_type" in
+        server|client) add_to_ssl_certs "$index" "truststores" "$value";;
+        root) add_to_ca_database "root" "$index" "truststores" "$value";;
+        intermediate) add_to_ca_database "intermediate" "$index" "truststores" "$value";;
+      esac
+    fi
+    if [ "$status" -eq 0 ]; then
+      echosv "Successfully processed $index: cert for $stores trust databases."
+      return 0
+    else
+      echow "One or more trust operations failed."
+      return 1
+    fi
 
-  if [ "$chrome_trust" = "true" ]; then
-    _install_browser_truststore "$ca_name" "$index" "chrome" "$ca_cert_path"
-    trusts="${trusts}${pfx}Chrome/Brave"
-  fi
-
-  # save to data.json if used as command
-  if [ -z "$3" ] && { [ "$ca_storage_type" = "server" ] || [ "$ca_storage_type" = "client" ]; }; then
-    add_to_ssl_certs "$index" "trusts" "$trusts"
-  elif [ -z "$3" ] && [ "$ca_storage_type" = "root" ]; then
-    add_to_ca_database "rootCAs" "$index" "trusts" "$trusts"
-  elif [ -z "$3" ] && [ "$ca_storage_type" = "intermediate" ]; then
-    add_to_ca_database "intermediateCAs" "$index" "trusts" "$trusts"
-  fi
-
-  status=$?
-
-  if [ "$status" -eq 0 ]; then
-    echos "Successfully installed cert to $trusts"
-    return 0
-  else
-    echoe "Failed installing cert to NSS databases or system trust"
-    return 1
+  elif [ "$process" = "cleanup" ]; then
+    indices=$(get_all_indices)
+    while read -r idx; do
+      datastores=$(get_value_from_index "$idx" "truststores")
+      { [ -z "$datastores" ] || [ "$datastores" = '' ] || [ "$datastores" = null ]; } && continue
+      # TODO: Implement cleanup for orphaned NSS database entries (idx in data.json, mhhhh)
+    done < "$indices"
   fi
 }
