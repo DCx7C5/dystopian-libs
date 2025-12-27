@@ -915,8 +915,6 @@ create_certificate_authority() {
   use_rsa="${27:-false}"
   stores="${28:-}"
 
-
-
   echod "Starting create_certificate_authority with parameters:"
   echod "           ca_name: $ca_name"
   echod "       ca_cert_out: $ca_cert_out"
@@ -1128,14 +1126,14 @@ create_certificate_authority() {
     fi
   fi
 
-  if [ -n "$install_trusts" ]; then
+  if [ -n "$stores" ]; then
     manage_truststore "$ca_name" "install" "$stores" || {
       echoe "Error installing to NSS databases or system-wide trust."
       return 1
     }
+    add_to_ca_database "$ca_storage_type" "$index" "truststores" "$stores"
   fi
 
-  add_to_ca_database "$ca_storage_type" "$index" "truststores" "$stores"
 
   # Display CA information
   ca_subject=$(openssl x509 -in "$ca_cert_out" -noout -subject | sed 's/subject=//')
