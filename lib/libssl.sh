@@ -1319,7 +1319,7 @@ sign_certificate_request() {
   fullchain_out="${13:+$(absolutepathidx "${13}" "$index")}"
   fullchain_out="${13:-$(absolutepathidx "${DC_CERT}/fullchain.pem" "$index")}"
 
-  stores="${15:-}"
+  stores="${14:-}"
 
   # Check for default CA if no CA params set
   [ -z "$ca_index" ] && ca_index="$(find_defaultCA)"
@@ -1430,12 +1430,13 @@ sign_certificate_request() {
 
   # Install to trust databases if parameters passed
   if [ -n "$stores" ]; then
-    manage_truststore "$ca_name" "install" "$stores" || {
+    echod "Calling manage_truststore \"$index\" \"install\" \"$stores\""
+    manage_truststore "$index" "install" "$stores" || {
       echoe "Error installing to NSS databases or system-wide trust."
       return 1
     }
+    add_to_ssl_certs "$index" "truststores" "$stores"
   fi
-  add_to_ssl_certs "$index" "truststores" "$stores"
 
   # Cleanup CSR and config files based on keep flags
   echov "Cleaning up temporary files"
