@@ -9,7 +9,7 @@ umask 077
 echoi() {
   if [ "$QUIET" -ne 1 ]; then
     if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
-    printf "\033[1;36m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
+    printf "\033[1;34m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
   fi
 }
 
