@@ -1485,6 +1485,41 @@ manage_truststore() {
   fi
 }
 
+init_gpg_env() {
+  export GNUPGHOME="${1:-$DC_GNUPG}"
+  if [ ! -d "$GNUPGHOME" ]; then
+    mkdir -p -- "$GNUPGHOME/gpg.conf.d" || {
+      echoe "Failed creating gnupg home directory"
+      return 1
+    }
+
+  fi
+  if [ ! -f "$GNUPGHOME/gpg.conf.d/trust.conf" ]; then
+    touch "$GNUPGHOME/gpg.conf.d/trust.conf"
+    echo "trust-model always" | tee "$GNUPGHOME/gpg.conf.d/trust.conf"
+  fi
+  if [ ! -f "$GNUPGHOME/pubring.kbx" ]; then
+    gpg --list-secret-keys >/dev/null 2>&1 || true
+  fi
+  [ -n "$GNUPGHOME" ] && echosv "Successfully setup GNUPGHOME"
+}
+
+
+create_tmp_gpg_home() {
+  tmpdir="$(mktemp -d -- /tmp/XXXXXXXXX)"
+  init_gpg_env "$tmpdir" || return 1
+  echo "$tmpdir"
+  return 0
+}
+
+
+create_gpg_home() {
+  init_gpg_env || return 1
+  echo "$GNUPGHOME"
+  return 0
+}
+
+
 exec_as_user() {
   su - "$DYSTOPIAN_USER" -c "$@"
 }
