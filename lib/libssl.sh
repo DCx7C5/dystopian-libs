@@ -1503,9 +1503,9 @@ create_cert_chain() {
   if [ -f "$chain_outfile" ]; then
     backup_file="${chain_outfile%.*}-backup-$(date +%Y%m%d-%H%M%S).${chain_outfile##*.}"
     cp "$chain_outfile" "$backup_file" || {
-      echo "Warning: Failed to backup existing chain file"
+      echow "Failed to backup existing chain file"
     }
-    echo "Existing chain file backed up as: $backup_file"
+    echosv "Existing chain file backed up as: $backup_file"
   fi
 
   # Create fullchain cert (cert first, then CA)
@@ -1526,13 +1526,13 @@ create_cert_chain() {
 
   # Verify the chain is valid
   if ! openssl verify -CAfile "$ca_file" "$cert_file" >/dev/null 2>&1; then
-    echow "Warning: Certificate chain may not be valid - verification failed"
+    echow "Certificate chain may not be valid - verification failed"
   fi
 
   # Add to index if index parameter provided
   if [ -n "$index" ]; then
     add_to_ssl_certs "$index" "fullchain" "$chain_outfile" || {
-      echow "Warning: Failed to add chain file to index"
+      echow "Failed to add chain file to index"
     }
   fi
 
