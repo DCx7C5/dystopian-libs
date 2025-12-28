@@ -1484,3 +1484,98 @@ manage_truststore() {
     done < "$indices"
   fi
 }
+
+exec_as_user() {
+  su - "$DYSTOPIAN_USER" -c "$@"
+}
+
+
+install_to_fritzbox() {
+  host="${1:-"https://192.168.178.1"}"
+  host="${host%/}"
+  pass="${2:+$([ -s "$2" ] && absolutepath "$2" || echo "$pass")}"
+  passdbg=$({ [ -n "${2}" ]  && [ ! -f "${2}" ]; } && echo "[SET]" || echo "${2}")
+  username="$3"
+  certpass="$4"
+  certpassdbg=$({ [ -n "${4}" ]  && [ ! -f "${4}" ]; } && echo "[SET]" || echo "${4}")
+  name="$5"
+
+  debugv="$([ "$DEBUG" -eq 1 ] && echo "-v " || echo "")"
+  index=$(echo "$name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
+  [ "$index" = "$name" ] && name="$(get_value_from_index "$index" "name")"
+  tmpfile="$(mktemp -t XXXXXX)"
+  tmpcert="$(mktemp -t XXXXXX.pem)"
+
+  echoi "Installing certificate: $name on $host"
+
+  echod "Starting install_to_fritzbox with:"
+  echod "       host: $host"
+  echod "       pass: $passdbg"
+  echod "   username: $username"
+  echod "   certpass: $certpassdbg"
+  echod "       name: $name"
+
+  echov "Initiating challenge..."
+
+  echod "Calling curl -sS \"$host/login_sid.lua\" | cat | sed -ne 's/^.*<Challenge>\([0-9a-f][0-9a-f]*\)<\/Challenge>.*$/\1/p'"
+  challenge="$({ curl -sS "$host/login_sid.lua" | cat | sed -ne 's/^.*<Challenge>\([0-9a-f][0-9a-f]*\)<\/Challenge>.*$/\1/p'; } 2>/dev/null)"
+  if [ -z "${challenge}" ]; then
+    echoe "Invalid challenge received."
+    return 1
+  else
+    echod "Challenge received: $challenge"
+  fi
+
+  echov "Creating md5sum..."
+  if [ -s "$pass" ]; then
+    md5hash="$(printf "%s" "$challenge-$(tr -d '\n' <"$pass")" | iconv -f ASCII -t UTF-16LE | md5sum | tr -d '\n\- ')"
+  else
+    md5hash="$(printf "%s" "$challenge-$pass" | iconv -f ASCII -t UTF-16LE | md5sum | tr -d '\n\- ')"
+  fi
+  if [ -z "${md5hash}" ]; then
+    echoe "Failed creating md5hash."
+    return 1
+  else
+    echod "md5 created: $md5hash"
+  fi
+
+  echov "Submitting challenge and log in..."
+  echod "Calling curl -sS \"$host/login_sid.lua?username=$username&response=$challenge-$md5hash\" | cat | sed -ne 's/^.*<SID>\([0-9a-f][0-9a-f]*\)<\/SID>.*$/\1/p'"
+  sid="$({ curl -sS "$host/login_sid.lua?username=$username&response=$challenge-$md5hash" | cat | sed -ne 's/^.*<SID>\([0-9a-f][0-9a-f]*\)<\/SID>.*$/\1/p'; } 2>/dev/null)"
+  if [ -z "${sid}" ] || [ "${sid}" = "0000000000000000" ]; then
+    echoe "Login failed."
+    return 1
+  else
+    echosv "Login successful."
+    echod "Received SID: $sid."
+  fi
+
+  # generate our upload request
+  certbundle=$(cat "$(get_value_from_index "$index" "key")" "$(get_value_from_index "$index" "fullchain")"  | grep -v '^$')
+  boundary="---------------------------$(date +%Y%m%d%H%M%S)"
+
+cat <<EOD >>"${tmpfile}"
+--${boundary}
+Content-Disposition: form-data; name="sid"
+
+${sid}
+--${boundary}
+Content-Disposition: form-data; name="BoxCertImportFile"; filename="BoxCert.pem"
+Content-Type: application/octet-stream
+
+${certbundle}
+--${boundary}--
+EOD
+
+  echov "Uploading certificate..."
+  success_msgs="^ *(Das SSL-Zertifikat wurde erfolgreich importiert|Import of the SSL certificate was successful|El certificado SSL se ha importado correctamente|Le certificat SSL a été importé|Il certificato SSL è stato importato( correttamente)?|Import certyfikatu SSL został pomyślnie zakończony)\.$"
+  echod "Calling curl -sS -X POST \"${host}/cgi-bin/firmwarecfg\" -H \"Content-type: multipart/form-data boundary=${boundary}\" --data-binary \"@${tmpfile}\" | cat ..."
+  { curl -sS -X POST "${host}/cgi-bin/firmwarecfg" -H "Content-type: multipart/form-data boundary=${boundary}" --data-binary "@${tmpfile}" | cat | grep -qE "${success_msgs}"; } 2>/dev/null
+  if [ $? -ne 0 ]; then
+    echoe "Could not import certificate to $name."
+    return 1
+  else
+    echos "Successfully uploaded & installed certificate: $name on $host."
+    return 0
+  fi
+}

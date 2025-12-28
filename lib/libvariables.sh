@@ -2,7 +2,6 @@
 # shellcheck disable=SC2034
 
 
-DYSTOPIAN_USER="root"
 DC_POS_ARGS=
 
 DYSTOPIAN_CFGDIR="/etc/dystopian"
