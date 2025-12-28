@@ -91,28 +91,7 @@ _gpg_export_secret_primary() {
         echod "Calling printf \"%s\" \"\" | $GPG_CMD \"$fingerprint\" > \"$out_path\""
         printf "%s" "" | $GPG_CMD "$fingerprint" > "$out_path"
 
-    # Passphrase from parameter
-    elif [ -n "$passphrase" ] && [ ! -f "$passphrase" ]; then
-        if [ "$openssl_encrypt" = "true" ]; then
-            echod "Calling printf \"%s\" \"$passphrasedbg\" | $GPG_CMD \"$fingerprint\" | encrypt_gpg_key \"$out_path\" \"$passphrasedbg\""
-            encrypt_gpg_key "$out_path" "$passphrase" "$(printf "%s" "$passphrase" | $GPG_CMD "$fingerprint")"
-            add_to_gpg_key "$(basename -- "${out_path%%.*}")" "salt" "$salt"
-        else
-            echod "Calling printf \"%s\" \"$passphrasedbg\" | $GPG_CMD \"$fingerprint\" > \"$out_path\""
-            printf "%s" "$passphrase" | $GPG_CMD "$fingerprint" > "$out_path"
-        fi
 
-    # Passphrase from file
-    elif [ -s "$passphrase" ]; then
-        if [ "$openssl_encrypt" = "true" ]; then
-            echod "Calling $GPG_CMD \"$fingerprint\" | encrypt_gpg_key \"$out_path\" \"$passphrasedbg\""
-            encrypt_gpg_key "$out_path" "$passphrase" "$($GPG_CMD "$fingerprint")"
-            add_to_gpg_key "$(basename -- "${out_path%%.*}")" "salt" "$salt"
-        else
-            echod "Calling $GPG_CMD \"$fingerprint\" > \"$out_path\""
-            $GPG_CMD "$fingerprint" > "$out_path"
-        fi
-    fi
 
     if [ "$openssl_encrypt" = "true" ] && [ ! -s "$out_path.enc" ]; then
         echoe "Failed exporting Secret Key to $out_path.enc"
@@ -191,30 +170,6 @@ _gpg_export_secret_ssb_with_dummy() {
         fi
         unset openssl_passphrase
 
-    # No passphrase at all
-    elif [ -z "$passphrase" ]; then
-        echod "Calling printf \"%s\" \"\" | $GPG_CMD \"$fingerprint\" > \"$out_path\""
-        if ! printf "%s" "" | $GPG_CMD "$fingerprint" > "$out_path"; then
-            echoe "Failed"
-            return 1
-        fi
-
-    # Passphrase from parameter
-    elif [ -n "$passphrase" ] && [ ! -f "$passphrase" ]; then
-        if [ "$openssl_encrypt" != "true" ]; then
-            echod "Calling printf \"%s\" \"$passphrasedbg\" | $GPG_CMD \"$fingerprint\" > \"$out_path\""
-            if ! printf "%s" "$passphrase" | $GPG_CMD "$fingerprint" > "$out_path"; then
-                echoe "Failed"
-                return 1
-            fi
-        else
-            echod "Calling printf \"%s\" \"$passphrasedbg\" | $GPG_CMD \"$fingerprint\" | encrypt_gpg_key \"$out_path\" \"$passphrasedbg\""
-            if ! encrypt_gpg_key "$out_path" "${passphrase}" "$(printf "%s" "$passphrase" | $GPG_CMD "$fingerprint")"; then
-                echoe "Failed"
-                return 1
-            fi
-        fi
-
     # Passphrase from file
     elif [ -s "$passphrase" ]; then
         if [ "$openssl_encrypt" != "true" ]; then
@@ -266,16 +221,6 @@ _gpg_create_primary_key() {
     if [ "$passphrase" = "gui" ] || [ "$passphrase" = "GUI" ]; then
         echod "Calling $GPG_CMD \"$uid\" \"ed25519\" \"$usage\" \"$expiry_date\""
         $GPG_CMD "$uid" "ed25519" "$usage" "$expiry_date" >/dev/null 2>&1
-
-    # No passphrase at all
-    elif [ -z "$passphrase" ]; then
-        echod "Calling printf \"\" | $GPG_CMD \"$uid\" \"ed25519\" \"$usage\" \"$expiry_date\""
-        printf "%s" "" | $GPG_CMD "$uid" "ed25519" "$usage" "$expiry_date" >/dev/null 2>&1
-
-    # Passphrase from cmdline
-    elif [ -n "$passphrase" ] && [ ! -f "$passphrase" ]; then
-        echod "Calling printf \"%s\" \"$passphrasedbg\" | $GPG_CMD \"$uid\" \"ed25519\" \"$usage\" \"$expiry_date\""
-        printf "%s" "$passphrase" | $GPG_CMD "$uid" "ed25519" "$usage" "$expiry_date" >/dev/null 2>&1
 
     # Passphrase from file
     elif [ -s "$passphrase" ]; then
@@ -332,30 +277,6 @@ _gpg_add_subkey() {
         fi
         echod "Add $usage Key: $GPG_CMD \"$primary_key_id\" \"$curve\" \"$usage\" \"$expiry_date\""
         $GPG_CMD "$primary_key_id" "$curve" "$usage" "$expiry_date" 2>&1
-
-    # No passphrase at all
-    elif [ -z "$passphrase" ]; then
-        if [ -n "$uid" ] && [ "$uid" != " " ]; then
-            echod "Add UID: gpg --batch --homedir \"$homedir\" --quick-add-uid \"$fingerprint\" \"$uid\""
-            printf "%s" "" | gpg --batch --homedir "$homedir"  --pinentry-mode loopback --passphrase-fd 0 --quick-add-uid "$fingerprint" "$uid" 2>&1
-
-            echod "Trust UID: printf \"trust\n5\ny\nsave\" | gpg --homedir \"$homedir\" --command-fd 0 --edit-key \"$primary_key_id\" 2>&1"
-            printf "trust\n5\ny\nsave\n" | gpg --batch --homedir "$homedir" --command-fd 0 --edit-key "$primary_key_id" 2>/dev/null
-        fi
-        echod "Add $usage Key: printf \"%s\" \"\" | $GPG_CMD \"$primary_key_id\" \"$curve\" \"$usage\" \"$expiry_date\""
-        printf "%s" "" | $GPG_CMD "$primary_key_id" "$curve" "$usage" "$expiry_date" 2>&1
-
-    # Read pass from cmdline
-    elif [ -n "$passphrase" ] && [ ! -f "$passphrase" ]; then
-        if [ -n "$uid" ] && [ "$uid" != " " ]; then
-            echod "Add UID: gpg --batch --homedir \"$homedir\" --quick-add-uid \"$fingerprint\" \"$uid\""
-            printf "%s" "$passphrase" | gpg --batch --homedir "$homedir" --pinentry-mode loopback --passphrase-fd 0 --quick-add-uid "$fingerprint" "$uid" 2>&1
-
-            echod "Trust UID: printf \"trust\n5\ny\nsave\" | gpg --homedir \"$homedir\" --command-fd 0 --edit-key \"$primary_key_id\" 2>&1"
-            printf "trust\n5\ny\nsave\n" | gpg --batch --homedir "$homedir" --command-fd 0 --edit-key "$primary_key_id" 2>/dev/null
-        fi
-        echod "Add $usage Key: printf \"%s\" \"$passphrasedbg\" | gpg --batch --homedir \"$homedir\" --pinentry-mode loopback --passphrase-fd 0 --quick-add-key \"$primary_key_id\" \"$curve\" \"$usage\" \"$expiry_date\""
-        printf "%s" "$passphrase" | $GPG_CMD "$primary_key_id" "$curve" "$usage" "$expiry_date" 2>&1
 
     # Read pass from file
     elif [ -s "$passphrase" ]; then
@@ -937,12 +858,6 @@ sign_pkgbuild() {
     if [ "$makepkg" = "false" ] || ! which makepkg >/dev/null 2>&1; then
         if [ -z "$passphrase" ]; then
             gpg --homedir "$homedir" \
-                --detach-sign
-        elif [ -n "$passphrase" ] && [ ! -f "$passphrase" ]; then
-            printf "%s" "$passphrase" | \
-            gpg --homedir "$homedir" \
-                --pinentry-mode loopback \
-                --passphrase-fd 0 \
                 --detach-sign
         elif [ -s "$passphrase" ]; then
             gpg --homedir "$homedir" \
