@@ -28,12 +28,8 @@ echow() {
   wstr=""
   if [ "$QUIET" -ne 1 ]; then
     [ "$DEBUG" -eq 1 ] && wstr=" WARNING:"
-    if [ "$2" = 'tty' ]; then
-      printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >/dev/tty 2>/dev/null
-    else
-      printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >&2
-    fi
-    [ -z "$2" ] && printf "\n" >&2
+    printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >&2 2>/dev/null
+    [ -z "$2" ] && [ "$2" != "nonl" ] && printf "\n" >&2
     [ "$2" = '\r' ] && printf "\r" >&2
   fi
 }
@@ -251,7 +247,11 @@ cleanup_dcrypto_files() {
   cleanup_backups="${3:-false}"
   cleanup_non_ca_keys="${4:-false}"
   cleanup_dry_run="${5:-false}"
-  keep_backups="${6:-2}"  # Number of recent backup CSRs to keep
+  cleanup_keep_backups="${6:-2}"
+  cleanup_passphrase="${7:+$([ -s "$7" ] && absolutepath "$7")}"
+  cleanup_salt="${8:+$([ -s "$8" ] && absolutepath "$8")}"
+  cleanup_salt="${cleanup_salt:-"${cleanup_index:+"$(get_value_from_ca_index "$cleanup_index" "salt")"}"}"
+  cleanup_key="${cleanup_salt:+${cleanup_passphrase:+${cleanup_index:+$(get_value_from_index "$cleanup_index" "key")}}}"
 
   echod "Starting cleanup_dcrypto_files with parameters:"
   echod "        cleanup_index: $cleanup_index"
@@ -259,12 +259,21 @@ cleanup_dcrypto_files() {
   echod "      cleanup_backups: $cleanup_backups"
   echod "  cleanup_non_ca_keys: $cleanup_non_ca_keys"
   echod "      cleanup_dry_run: $cleanup_dry_run"
-  echod "         keep_backups: $keep_backups"
+  echod " cleanup_keep_backups: $cleanup_keep_backups"
+  echod "   cleanup_passphrase: $cleanup_passphrase"
+  echod "         cleanup_salt: $cleanup_salt"
   echod "            DC_CFGDIR: $DC_CFGDIR"
   echod "                DC_DB: $DC_DB"
 
   echoi "dystopian-crypto Cleanup${cleanup_dry_run:+$([ "$cleanup_dry_run" = "true" ] && echo "DRY RUN")}"
   echoi "=============="
+
+  if [ -n "$cleanup_salt" ] && [ -z "$cleanup_passphrase" ]; then
+    echoe "Entry is protected. Please provide key passphrase."
+    return 1
+  elif [ -z "$cleanup_salt" ] && [ -n "$cleanup_passphrase" ]; then
+    echow "Entry is not protected. Passphrase parameter not necessary!"
+  fi
 
   # Clean specific index
   if [ -n "$cleanup_index" ]; then
@@ -274,6 +283,20 @@ cleanup_dcrypto_files() {
       return 1
     fi
     if [ "$cleanup_dry_run" != "true" ]; then
+      if [ -s "$cleanup_salt" ]; then
+        algo=$(get_value_from_index "$cleanup_index" "algo")
+        [ "$algo" = 'EC' ] && key_opt="ec_paramgen_curve:secp384r1" || key_opt="rsa_keygen_bits:4096"
+        algo_param=$(echo "$algo" | tr "[:upper:]" "[:lower:]")
+        openssl "${algo_param}" \
+                -in "$cleanup_key" \
+                -passin "pass:$(derive_key_from_passphrase "$cleanup_passphrase" "$cleanup_salt" 'cleanup process execution' "false")" \
+                -check \
+                -noout >/dev/null 2>&1 || {
+          echoe "Passphrase verification failed. Wrong passphrase."
+          return 1
+        }
+        echosv "Correct passphrase. Deleting entry..."
+      fi
       manage_truststore "$cleanup_index" "uninstall"
       delete_ssl_index "$cleanup_index" || {
           echoe "Failed to clean index $cleanup_index"
@@ -348,11 +371,11 @@ cleanup_dcrypto_files() {
       # Check if import_file is a csrbkp in index.json
       index=$(jq -r --arg path "$backup_file_path" '.ssl.keys | to_entries[] | select(.value | to_entries[] | select(.key | test("^csrbkp") and .value == $path)) | .key' -- "$DC_DB")
       if [ -n "$index" ]; then
-        # Sort csrbkp entries by number and keep only the most recent $keep_backups
+        # Sort csrbkp entries by number and keep only the most recent $cleanup_keep_backups
         backup_files=$(jq -r --arg idx "$index" '.ssl.keys[$idx] | to_entries[] | select(.key | test("^csrbkp")) | .value' -- "$DC_DB" | sort -V)
         total_backups=$(echo "$backup_files" | wc -l)
-        if [ "$total_backups" -gt "$keep_backups" ]; then
-          delete_count=$((total_backups - keep_backups))
+        if [ "$total_backups" -gt "$cleanup_keep_backups" ]; then
+          delete_count=$((total_backups - cleanup_keep_backups))
           echo "$backup_files" | head -n "$delete_count" | while IFS= read -r old_backup; do
             echoi "Backup import_file (index $index): $old_backup"
             if [ "$cleanup_dry_run" != "true" ]; then
@@ -377,7 +400,7 @@ cleanup_dcrypto_files() {
             fi
           done
         else
-            echod "Keeping backup import_file (within limit $keep_backups): $backup_file_path"
+            echod "Keeping backup import_file (within limit $cleanup_keep_backups): $backup_file_path"
         fi
       else
         echoi "Backup import_file (no index): $backup_file_path"
@@ -1505,25 +1528,22 @@ prompt_passphrase() {
   secret=1 secret2=2
   if [ "$1" = true ]; then
     while [ "$secret" != "$secret2" ]; do
-      echow "Enter pass phrase for $2: " "tty"
+      echow "Enter pass phrase for $2: " "nonl"
       IFS= read -r secret </dev/tty
-      printf '\n' >/dev/tty
-      echow "Verifying - Enter pass phrase for $2: " "tty"
+      printf '\n' >&2
+      echow "Verifying - Enter pass phrase for $2: " "nonl"
       IFS= read -r secret2 </dev/tty
       if [ "$secret" != "$secret2" ]; then
-        printf '\n' >/dev/tty
-        echow "Pass phrase mismatch! Try again!" "tty"
-        printf '\n' >/dev/tty
+        echow "Pass phrase mismatch! Try again!"
       fi
     done
   else
-    echow "Enter pass phrase for $2: " "tty"
+    echow "Enter pass phrase for $2: " "nonl"
     IFS= read -r secret </dev/tty
   fi
-
+  printf "\n" >&2
   printf '%s' "$secret"
   stty -F /dev/tty "$oldtty" 2>/dev/null || stty -F /dev/tty sane 2>/dev/null
-  printf '\n' >/dev/tty
   unset secret secret2
 }
 
