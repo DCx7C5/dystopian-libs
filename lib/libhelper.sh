@@ -1093,7 +1093,7 @@ download_and_install_latest_releases() {
     echoe "Failed changing directory: $tmpdir"
     return 1
   }
-  if ! rm -rf "$tmpdir"; then
+  if ! rm -rf -- "$tmpdir"; then
     echo "Error removing $tmpdir"
     return 1
   fi
@@ -1407,7 +1407,7 @@ manage_truststore() {
 
   ca_cert_path=$(get_value_from_index "$index" "cert")
   if [ -z "$ca_cert_path" ]; then
-    echow "Certificate path not found for index $index"
+    echowv "Certificate path not found for index $index"
     return 1
   fi
 
@@ -1510,9 +1510,14 @@ prompt_passphrase() {
       printf '\n' >/dev/tty
       echow "Verifying - Enter pass phrase for $2: " "tty"
       IFS= read -r secret2 </dev/tty
+      if [ "$secret" != "$secret2" ]; then
+        printf '\n' >/dev/tty
+        echow "Pass phrase mismatch! Try again!" "tty"
+        printf '\n' >/dev/tty
+      fi
     done
   else
-    echow "Enter pass phrase: " "tty"
+    echow "Enter pass phrase for $2: " "tty"
     IFS= read -r secret </dev/tty
   fi
 

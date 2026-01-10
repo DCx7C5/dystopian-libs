@@ -303,7 +303,7 @@ _create_and_verify_csr() {
 
   (
     echoi "Generating CSR (Certificate Signing Request)"
-    echod "Calling derive_key_from_passphrase \"$passphrase\" \"$salt\" \"$key_file private key\" \"false\" | openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
+    echod "Calling openssl req -new -key $key_file -out $csr_out -config $config_file -passin stdin"
     if ! openssl req \
             -new \
             -key "$key_file" \
@@ -468,7 +468,7 @@ _create_and_verify_sscert() {
             -scrypt_r 8 \
             -scrypt_p 1 \
             -outform "${KEYOUTFORM}" \
-            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt" "CA private key encryption" "true")" || {
+            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt" "CA private key encryption" "true")" 2>/dev/null || {
       echoe "Failed to generate self-signed certificate"
       return 1
     }
@@ -500,7 +500,7 @@ _create_and_verify_sscert() {
     echov "Validating generated CA private key..."
     openssl ${algo_param} \
             -in "$ca_key_out" \
-            -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt" "encrypted CA private key validation" "false")" \
+            -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt" 'encrypted CA private key validation' "false")" \
             -check \
             -noout >/dev/null 2>&1 || {
       echoe "Failed to verify generated CA private key"
@@ -1495,46 +1495,19 @@ _revoke_certificate() {
   fi
 
   (
-    if [ "$no_argon" = "false" ]; then
-      # Generate derived key for decryption
-      echod "Calling derive_key_from_passphrase pass salt | openssl ca ..."
-      derive_key_from_passphrase "$passphrase" "$salt" | \
-      openssl ca \
-              -revoke "$cert_file" \
-              -keyfile "$ca_key_file" \
-              -cert "$ca_cert_file" \
-              -config "$config_file" \
-              -crl_reason "$reason" \
-              -passin "stdin" 2>/dev/null || {
-        echoe "Failed to revoke certificate (with encrypted key)"
-        return 1
-      }
-    elif [ "$no_argon" = "true" ]; then
-      echod "Calling derive_key_from_passphrase pass salt | openssl ca ..."
-      derive_key_from_passphrase "$passphrase" | \
-      openssl ca \
-              -revoke "$cert_file" \
-              -keyfile "$ca_key_file" \
-              -cert "$ca_cert_file" \
-              -config "$config_file" \
-              -crl_reason "$reason" \
-              -passin "stdin" 2>/dev/null || {
-          echoe "Failed to revoke certificate (with encrypted key)"
-          return 1
-        }
-    else
-      # Revoke certificate without password
-      echod "Calling openssl ca ..."
-      openssl ca \
-              -revoke "$cert_file" \
-              -keyfile "$ca_key_file" \
-              -cert "$ca_cert_file" \
-              -config "$config_file" \
-              -crl_reason "$reason" 2>/dev/null || {
-        echoe "Failed to revoke certificate"
-        return 1
-      }
-    fi
+    # Generate derived key for decryption
+    echod "Calling derive_key_from_passphrase pass salt | openssl ca ..."
+    derive_key_from_passphrase "$passphrase" "$salt" | \
+    openssl ca \
+            -revoke "$cert_file" \
+            -keyfile "$ca_key_file" \
+            -cert "$ca_cert_file" \
+            -config "$config_file" \
+            -crl_reason "$reason" \
+            -passin "stdin" 2>/dev/null || {
+      echoe "Failed to revoke certificate (with encrypted key)"
+      return 1
+    }
     return 0
   )
   status=$?
