@@ -1563,75 +1563,175 @@ exec_as_user() {
 }
 
 
+# shellcheck disable=SC2086
+login_using_pbkdf2() {
+  host="${1%/}"
+  username="${2:-}"
+  pass="$3"
+  challenge="$4"
+
+  echov "Logging in using PBKDF2 challenge"
+
+  [ -z "$pass" ] && { echo "login_using_pbkdf2: password required" >&2; return 1; }
+  [ -z "$challenge" ] && { echo "login_using_pbkdf2: no challenge received" >&2; return 1; }
+
+  iter1=$(echo "$challenge" | cut -d'$' -f2)
+  salt1hex=$(echo "$challenge" | cut -d'$' -f3)
+  iter2=$(echo "$challenge" | cut -d'$' -f4)
+  salt2hex=$(echo "$challenge" | cut -d'$' -f5)
+
+  hash1_hex=$(
+    openssl kdf \
+            -keylen 32 \
+            -kdfopt "hexsalt:$salt1hex" \
+            -kdfopt "iter:$iter1" \
+            -kdfopt "pass:$(tr -d '\r\n' < "$pass")" \
+            -kdfopt digest:SHA256 \
+            PBKDF2 2>/dev/null | \
+    tr -d '\n: ' | \
+    tr  "[:upper:]" "[:lower:]"
+  )
+
+  hash2_hex=$(
+    openssl kdf \
+             -keylen 32 \
+             -kdfopt "hexsalt:$salt2hex" \
+             -kdfopt "iter:$iter2" \
+             -kdfopt "hexpass:$hash1_hex" \
+             -kdfopt digest:SHA256 \
+             PBKDF2 2>/dev/null | \
+    tr -d '\n: ' | \
+    tr  "[:upper:]" "[:lower:]"
+  )
+
+  response="${salt2hex}\$${hash2_hex}"
+
+  # Submit login
+  if [ -n "$username" ]; then
+      post_data="username=$username&response=$response"
+  else
+      post_data="response=$response"
+  fi
+
+  echod "Calling curl $cparams -d $post_data $host/login_sid.lua?version=2 | sed -n (....)"
+  sid=$(curl ${cparams} -d "$post_data" "$host/login_sid.lua?version=2" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p')
+
+  return 0
+}
+
+# shellcheck disable=SC2086
+login_using_md5() {
+  host="${1%/}"
+  username="${2:-}"
+  pass="${3:-$(tr -d '\r\n' < "$pass")}"
+  challenge="${4}"
+
+  echov "Logging in using MD5 challenge"
+
+  [ -z "$pass" ] && { echo "login_using_md5: password required" >&2; return 1; }
+  [ -z "$challenge" ] && { echo "login_using_md5: no challenge received" >&2; return 1; }
+
+  # Legacy MD5: challenge-password in UTF-16LE
+  echoe "chl: $challenge"
+  echoe "pass: $pass"
+  echoe "test: $(printf "%s" "$challenge-$pass")"
+  md5hash=$(printf "%s" "$challenge-$pass" |
+            iconv -f UTF-8 -t UTF-16LE |
+            md5sum |
+            cut -d' ' -f1)
+  echoe "DEBUG: $md5hash"
+
+  echod "Calling curl $cparams $host/login_sid.lua?username$username&response=$challenge-$md5hash (....)"
+  curl ${cparams} "$host/login_sid.lua?username$username&response=$challenge-$md5hash" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p'
+
+  return 0
+}
+
+# shellcheck disable=SC2086
 install_to_fritzbox() {
-  host="${1:-"https://192.168.178.1"}"
-  host="${host%/}"
-  pass="${2:+$([ -s "$2" ] && absolutepath "$2" || echo "$pass")}"
-  passdbg=$({ [ -n "${2}" ]  && [ ! -f "${2}" ]; } && echo "[SET]" || echo "${2}")
+  proto="https"
+  host="${1:-"192.168.178.1"}"
+  host="$proto://${host%/}"
+  pass="$2"
   username="$3"
   certpass="$4"
-  certpassdbg=$({ [ -n "${4}" ]  && [ ! -f "${4}" ]; } && echo "[SET]" || echo "${4}")
   name="$5"
 
-  debugv="$([ "$DEBUG" -eq 1 ] && echo "-v " || echo "")"
   index=$(echo "$name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
   [ "$index" = "$name" ] && name="$(get_value_from_index "$index" "name")"
+
+  sid=
+  cparams=
+  v2="?version=2"
   tmpfile="$(mktemp -t XXXXXX)"
-  tmpcert="$(mktemp -t XXXXXX.pem)"
+  fallback=0
+
+  [ "${host:4:1}" != s ] && cparams="-s -S -k" || cparams="-s -S"
 
   echoi "Installing certificate: $name on $host"
 
   echod "Starting install_to_fritzbox with:"
   echod "       host: $host"
-  echod "       pass: $passdbg"
+  echod "       pass: $pass"
   echod "   username: $username"
-  echod "   certpass: $certpassdbg"
+  echod "   certpass: $certpass"
   echod "       name: $name"
+  echov "Requesting challenge..."
 
-  echov "Initiating challenge..."
+  blockt=999
+  while [ "$blockt" -gt 0 ]; do
+    case "$blockt" in
+      1|999)
+        echod "Calling curl ${cparams} \"$host/login_sid.lua$v2\""
+        challenge_response=$(curl ${cparams} "$host/login_sid.lua$v2")
+        challenge="$(echo "$challenge_response" | sed -n 's/.*<Challenge>\([^<]*\)<\/Challenge>.*/\1/p')"
+        prefix=$(echo "$challenge" | cut -d'$' -f1)
+        [ "$prefix" != "2" ] && v2=
+        blockt="$(echo "$challenge_response" | sed -n 's/.*<BlockTime>\([^<]*\)<\/BlockTime>.*/\1/p')"
+        echod "Response received, Challenge $challenge, BlockTime $blockt"
+        ;;
+      *) echow "We are being rate limited. $blockt seconds left." '\r';;
+    esac
+    blockt=$((blockt - 1))
+    sleep 1
+  done
 
-  echod "Calling curl -sS \"$host/login_sid.lua\" | cat | sed -ne 's/^.*<Challenge>\([0-9a-f][0-9a-f]*\)<\/Challenge>.*$/\1/p'"
-  challenge="$({ curl -sS "$host/login_sid.lua" | cat | sed -ne 's/^.*<Challenge>\([0-9a-f][0-9a-f]*\)<\/Challenge>.*$/\1/p'; } 2>/dev/null)"
-  if [ -z "${challenge}" ]; then
-    echoe "Invalid challenge received."
-    return 1
-  else
-    echod "Challenge received: $challenge"
+  if [ "$prefix" = "2" ] && [ "$fallback" -ne 1 ]; then
+    login_using_pbkdf2 "$host" "$username" "$pass" "$challenge" || {
+      echow "Failed logging in using PBKDF2 challenge."
+      echow "Falling back to md5 challenge."
+      fallback=1
+    }
   fi
 
-  echov "Creating md5sum..."
-  if [ -s "$pass" ]; then
-    md5hash="$(printf "%s" "$challenge-$(tr -d '\n' <"$pass")" | iconv -f ASCII -t UTF-16LE | md5sum | tr -d '\n\- ')"
-  else
-    md5hash="$(printf "%s" "$challenge-$pass" | iconv -f ASCII -t UTF-16LE | md5sum | tr -d '\n\- ')"
-  fi
-  if [ -z "${md5hash}" ]; then
-    echoe "Failed creating md5hash."
-    return 1
-  else
-    echod "md5 created: $md5hash"
+  if [ "$prefix" != "2" ] || [ "$fallback" -eq 1 ]; then
+    login_using_md5 "$host" "$username" "$pass" "$challenge" || {
+      echoe "Failed logging in using md5 challenge"
+      return 1
+    }
   fi
 
-  echov "Submitting challenge and log in..."
-  echod "Calling curl -sS \"$host/login_sid.lua?username=$username&response=$challenge-$md5hash\" | cat | sed -ne 's/^.*<SID>\([0-9a-f][0-9a-f]*\)<\/SID>.*$/\1/p'"
-  sid="$({ curl -sS "$host/login_sid.lua?username=$username&response=$challenge-$md5hash" | cat | sed -ne 's/^.*<SID>\([0-9a-f][0-9a-f]*\)<\/SID>.*$/\1/p'; } 2>/dev/null)"
-  if [ -z "${sid}" ] || [ "${sid}" = "0000000000000000" ]; then
-    echoe "Login failed."
+  if [ -z "$sid" ] || [ "$sid" = "0000000000000000" ]; then
+    echoe "Login failed. SID is missing or 0 ($sid)"
     return 1
-  else
-    echosv "Login successful."
+  elif [ -n "$sid" ]; then
+    echosv "Login successful @$host"
     echod "Received SID: $sid."
   fi
 
-  # generate our upload request
-  certbundle=$(cat "$(get_value_from_index "$index" "key")" "$(get_value_from_index "$index" "fullchain")"  | grep -v '^$')
+  certbundle=$(cat "$(get_value_from_index "$index" "fullchain")" "$(get_value_from_index "$index" "key")" | grep -v '^$')
+  certpass="${certpass:+$(derive_key_from_passphrase "$certpass" "$(get_value_from_index "$index" "salt")")}"
   boundary="---------------------------$(date +%Y%m%d%H%M%S)"
 
-cat <<EOD >>"${tmpfile}"
+  cat <<EOD >>"${tmpfile}"
 --${boundary}
 Content-Disposition: form-data; name="sid"
 
 ${sid}
+--${boundary}
+Content-Disposition: form-data; name="BoxCertPassword"
+
+${certpass}
 --${boundary}
 Content-Disposition: form-data; name="BoxCertImportFile"; filename="BoxCert.pem"
 Content-Type: application/octet-stream
@@ -1642,13 +1742,14 @@ EOD
 
   echov "Uploading certificate..."
   success_msgs="^ *(Das SSL-Zertifikat wurde erfolgreich importiert|Import of the SSL certificate was successful|El certificado SSL se ha importado correctamente|Le certificat SSL a été importé|Il certificato SSL è stato importato( correttamente)?|Import certyfikatu SSL został pomyślnie zakończony)\.$"
-  echod "Calling curl -sS -X POST \"${host}/cgi-bin/firmwarecfg\" -H \"Content-type: multipart/form-data boundary=${boundary}\" --data-binary \"@${tmpfile}\" | cat ..."
-  { curl -sS -X POST "${host}/cgi-bin/firmwarecfg" -H "Content-type: multipart/form-data boundary=${boundary}" --data-binary "@${tmpfile}" | cat | grep -qE "${success_msgs}"; } 2>/dev/null
-  if [ $? -ne 0 ]; then
-    echoe "Could not import certificate to $name."
+  echod "Calling curl $cparams \"$host/cgi-bin/firmwarecfg\" -H \"Content-type: multipart/form-data boundary=(...)\" --data-binary \"@${tmpfile}\" | cat (...)"
+  { curl ${cparams} "$host/cgi-bin/firmwarecfg" -H "Content-type: multipart/form-data boundary=${boundary}" --data-binary "@${tmpfile}" | cat | grep -qE "${success_msgs}"; } 2>/dev/null
+  if [ $? -eq 1 ]; then
+    echoe "Certificate upload failed."
     return 1
-  else
-    echos "Successfully uploaded & installed certificate: $name on $host."
-    return 0
   fi
+
+  echos "Successfully uploaded & installed certificate: $name on $host."
+  return 0
 }
+
