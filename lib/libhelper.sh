@@ -28,8 +28,13 @@ echow() {
   wstr=""
   if [ "$QUIET" -ne 1 ]; then
     [ "$DEBUG" -eq 1 ] && wstr=" WARNING:"
-    printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >&2
+    if [ "$2" = 'tty' ]; then
+      printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >/dev/tty 2>/dev/null
+    else
+      printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >&2
+    fi
     [ -z "$2" ] && printf "\n" >&2
+    [ "$2" = '\r' ] && printf "\r" >&2
   fi
 }
 
@@ -57,6 +62,7 @@ echosv() {
     printf "\033[1;32m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
   fi
 }
+
 
 askyesno() {
   default="$2"
@@ -137,7 +143,7 @@ reset_dystopian_crypto() {
       }
       echos "Backup successful @ /etc/dystopian-crypto.bkp"
     fi
-
+    { [ "$ssl" = true ] && [ "$gpg" = true ]; } && echow "--ssl or --gpg flag not set."
     if [ -n "$ssl" ] && [ "$ssl" = "true" ]; then
       if askyesno "Last WARNING! Answering yes will delete everything SSL related in $DC_CFGDIR & $DC_DB" "N"; then
         rm -rf -- "${DC_CA}" "${DC_CERT}" "${DC_CRL}" 2>/dev/null || {
@@ -764,20 +770,23 @@ get_name_comment_from_uid() {
 
 
 gpg_build_cmd() {
-  { [ "$2" = "add" ] || [ "$2" = "gen" ] || [ "$2" = "adduid" ]; } && [ -n "$5" ] && GPG_CMD="$GPG_CMD --batch"
-  [ "$2" = "imp" ] && [ -z "$5" ] && gpg_cmd="$GPG_CMD --batch"
   [ -n "$1" ] && GPG_CMD="$GPG_CMD --homedir ${1}"
+  case "$2" in
+    imp)
+      GPG_CMD="$GPG_CMD --import";
+      [ -z "$5" ] && gpg_cmd="$GPG_CMD --batch";;
+    exp) GPG_CMD="$GPG_CMD --export";;
+    expsec) GPG_CMD="$GPG_CMD --export-secret-keys";;
+    expsecsub) GPG_CMD="$GPG_CMD --export-secret-subkeys";;
+    gen) GPG_CMD="$GPG_CMD --quick-gen-key";;
+    add) GPG_CMD="$GPG_CMD --quick-add-key";;
+    adduid) GPG_CMD="$GPG_CMD --quick-add-uid";;
+  esac
+  { [ "$2" = "add" ] || [ "$2" = "gen" ] || [ "$2" = "adduid" ]; } && [ -n "$5" ] && GPG_CMD="$GPG_CMD --batch"
+  [ "$3" = "true" ] && GPG_CMD="$GPG_CMD -a"
   [ "$4" = "false" ] && GPG_CMD="$GPG_CMD --armor"
   [ -s "$5" ] && GPG_CMD="$GPG_CMD --pinentry-mode loopback --passphrase-file ${5}"
   { { [ -n "$5" ] && [ ! -f "$5" ]; } || [ -z "$5" ]; } && { [ "$2" != "exp" ] && [ "$2" != "imp" ]; } && GPG_CMD="$GPG_CMD --pinentry-mode loopback --passphrase-fd 0"
-  [ "$2" = "exp" ] && GPG_CMD="$GPG_CMD --export"
-  [ "$2" = "imp" ] && GPG_CMD="$GPG_CMD --import"
-  [ "$2" = "expsec" ] && GPG_CMD="$GPG_CMD --export-secret-keys"
-  [ "$2" = "expsecsub" ] && GPG_CMD="$GPG_CMD --export-secret-subkeys"
-  [ "$3" = "true" ] && GPG_CMD="$GPG_CMD -a"
-  [ "$2" = "gen" ] && GPG_CMD="$GPG_CMD --quick-gen-key"
-  [ "$2" = "add" ] && GPG_CMD="$GPG_CMD --quick-add-key"
-  [ "$2" = "adduid" ] && GPG_CMD="$GPG_CMD --quick-add-uid"
 }
 
 
@@ -900,11 +909,6 @@ install_package() {
 }
 
 
-check_dependencies_secureboot() {
-  :
-}
-
-
 trigger_remount_efivars() {
   efiline=$(mount | grep efivars)
   if echo "$efiline" | grep -qE "\(rw"; then
@@ -941,16 +945,18 @@ remount_efivars_ro() {
 
 
 ssl_convert_der_to_pem() {
+    base="${1%.*}"
     echod "Converting DER to PEM:"
-    openssl x509 -inform der -outform pem -in "$1" -out "${1%.*}.pem"
+    openssl x509 -inform "${1##*.}" -outform pem -in "$1" -out "${1%.*}.pem"
     echod "Converted $1 to ${1%.*}.pem"
 }
 
 
 ssl_convert_pem_to_der() {
+    ext="${1##*.}"
     echod "Converting PEM to DER:"
-    openssl x509 -inform pem -outform der -in "$1" -out "${1%.*}.der"
-    echod "Converted $1 to ${1%.*}.pem"
+    openssl x509 -inform "${1##*.}" -outform der -in "$1" -out "${1%.*}.der"
+    echod "Converted $1 to ${1%.*}.der"
 }
 
 
@@ -1303,6 +1309,9 @@ _manage_system_truststore() {
       echoe "Invalid process: $process"
       return 1
   fi
+
+  echosv "Truststore operation successful"
+  return 0
 }
 
 
@@ -1395,7 +1404,7 @@ manage_truststore() {
 
   ca_cert_path=$(get_value_from_index "$index" "cert")
   if [ -z "$ca_cert_path" ]; then
-    echoe "Certificate path not found for index $index"
+    echow "Certificate path not found for index $index"
     return 1
   fi
 
@@ -1464,7 +1473,7 @@ manage_truststore() {
       case "$ca_stor_type" in
         server|client) add_to_ssl_certs "$index" "truststores" "$value";;
         root) add_to_ca_database "root" "$index" "truststores" "$value";;
-        intermediate) add_to_ca_database "intermediate" "$index" "truststores" "$value";;
+        intermediate) add_to_ca_database "$ca_stor_type" "$index" "truststores" "$value";;
       esac
     fi
     if [ "$status" -eq 0 ]; then
@@ -1484,6 +1493,32 @@ manage_truststore() {
     done < "$indices"
   fi
 }
+
+
+prompt_passphrase() {
+  oldtty=$(stty -F /dev/tty -g 2>/dev/null || echo '')
+  trap 'stty -F /dev/tty "$oldtty" 2>/dev/null || stty -F /dev/tty sane 2>/dev/null' INT TERM HUP
+  stty -F /dev/tty -echo 2>/dev/null
+  secret=1 secret2=2
+  if [ "$1" = true ]; then
+    while [ "$secret" != "$secret2" ]; do
+      echow "Enter pass phrase for $2: " "tty"
+      IFS= read -r secret </dev/tty
+      printf '\n' >/dev/tty
+      echow "Verifying - Enter pass phrase for $2: " "tty"
+      IFS= read -r secret2 </dev/tty
+    done
+  else
+    echow "Enter pass phrase: " "tty"
+    IFS= read -r secret </dev/tty
+  fi
+
+  printf '%s' "$secret"
+  stty -F /dev/tty "$oldtty" 2>/dev/null || stty -F /dev/tty sane 2>/dev/null
+  printf '\n' >/dev/tty
+  unset secret secret2
+}
+
 
 init_gpg_env() {
   export GNUPGHOME="${1:-$DC_GNUPG}"

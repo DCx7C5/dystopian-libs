@@ -12,19 +12,14 @@ get_value_from_index() {
           '.ssl.rootCAs[$idx][$value] //
            .ssl.intermediateCAs[$idx][$value] //
            .ssl.certs[$idx][$value] //
-           empty' -- "$DC_DB" || {
-      echoe "Failed getting value from db file"
-      return 1
-    }
+           empty' -- "$DC_DB" || return 1
+
   elif [ $# -eq 1 ]; then
     jq -r --arg idx "$1" \
           '.ssl.rootCAs[$idx] //
            .ssl.intermediateCAs[$idx] //
-           .ssl.certs[$idx][$value] //
-           empty' -- "$DC_DB" || {
-      echoe "Failed getting value from db file"
-      return 1
-    }
+           .ssl.certs[$idx] //
+           empty' -- "$DC_DB" || return 1
   fi
   return 0
 }
