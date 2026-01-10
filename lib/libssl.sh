@@ -942,7 +942,8 @@ create_certificate_authority() {
     fi
   fi
 
-  if [ -n "$stores" ]; then
+  if [ -n "$stores" ] && [ -s "$ca_key_out" ]; then
+    echod "Calling manage_truststore \"$ca_name\" \"install\" \"$stores\""
     manage_truststore "$ca_name" "install" "$stores" || {
       echoe "Error installing to NSS databases or system-wide trust."
       return 1
@@ -1244,7 +1245,7 @@ sign_certificate_request() {
   fi
 
   # Install to trust databases if parameters passed
-  if [ -n "$stores" ]; then
+  if [ -n "$stores" ] && [ -s "$cert_out" ] && [ -s "$(get_value_from_index "$index" "key")" ]; then
     echod "Calling manage_truststore \"$index\" \"install\" \"$stores\""
     manage_truststore "$index" "install" "$stores" || {
       echoe "Error installing to NSS databases or system-wide trust."
