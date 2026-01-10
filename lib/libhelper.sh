@@ -600,16 +600,19 @@ absolutepathidx() {
   filename="${1##*/}"
   ext="${filename##*.}"
   base="${filename%*".$ext"}"
-  if [ ! -f "$dir/$base.$2.$ext" ]; then
-      echo "$dir/$base.$2.$ext"
+  case "$OBFUSCATE_FILENAMES" in
+    true) idx="$(openssl rand -hex 8)";;
+    false) idx="$2";;
+  esac
+  if [ ! -f "$dir/$base.$idx.$ext" ]; then
+      echo "$dir/$base.$idx.$ext"
       return 0
   fi
-
   c=1
-  while [ -f "$dir/$base.$2.$c.$ext" ]; do
+  while [ -f "$dir/$base.$idx.$c.$ext" ]; do
       c=$(("$c" + 1))
   done
-  echo "$dir/$base.$2.$c.$ext"
+  echo "$dir/$base.$idx.$c.$ext"
 }
 
 
