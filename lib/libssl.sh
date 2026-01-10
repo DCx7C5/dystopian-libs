@@ -523,17 +523,6 @@ _create_and_verify_sscert() {
 }
 
 
-_traverse_certchain() {
-  index="$1" type=
-  while [ "$CHAIN_INCLUDE" != "$type" ] && [ -n "$index" ]; do
-    cert_file="$(get_value_from_index "$index" "cert")"
-    type="$(get_value_from_index "$index" "type")"
-    printf "%s\n" "$(cat "$cert_file")"
-    index="$(get_value_from_index "$index" "issuer")"
-  done
-}
-
-
 _create_and_verify_fullchain() {
   cert_file="$1"
   fullchain_out="$2"
@@ -554,7 +543,7 @@ _create_and_verify_fullchain() {
     # Create chain
     echod "Issuer index: $issuer_index"
     echod "Issuer cert file path: $issuer_cert"
-    _traverse_certchain "$index" > "$fullchain_out"
+    traverse_certchain "$index" > "$fullchain_out"
 
     # Validate chain file
     if [ ! -s "$fullchain_out" ]; then
@@ -606,7 +595,7 @@ create_private_key() {
   echod "      key_name: $key_name"
   echod "         index: $index"
   echod "       key_out: $key_out"
-  echod "    passphrase: $([ -n "$passphrase" ] && echo "[SET]")"
+  echod "    passphrase: $passphrase"
   echod "      salt_out: $salt_out"
   echod "       use_rsa: $use_rsa"
 
@@ -738,13 +727,13 @@ create_certificate_authority() {
   set_as_defaultRoot="${23:-false}"
 
   use_rsa="${25:-false}"
-  stores="${26:-$([ "$intermediate" = false ] && echo 'sys')}"
+  stores="${26:-system}"
 
   echod "Starting create_certificate_authority with parameters:"
   echod "           ca_name: $ca_name"
   echod "       ca_cert_out: $ca_cert_out"
   echod "        ca_key_out: $ca_key_out"
-  echod "           ca_pass: $([ -n "$ca_pass" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "           ca_pass: $ca_pass"
   echod "       ca_salt_out: $ca_salt_out"
   echod "       ca_conf_out: $ca_conf_out"
   echod "        ca_csr_out: $ca_csr_out"
@@ -760,8 +749,8 @@ create_certificate_authority() {
   echod "     root_ca_index: $root_ca_index"
   echod "       root_ca_key: $root_ca_key"
   echod "      root_ca_cert: $root_ca_cert"
-  echod "      root_ca_pass: $([ -n "$root_ca_pass" ] && echo "[SET]" || echo "[EMPTY]")"
-  echod "      root_ca_salt: $([ -n "$root_ca_salt" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "      root_ca_pass: $root_ca_pass"
+  echod "      root_ca_salt: $root_ca_salt"
   echod "     fullchain_out: $fullchain_out"
   echod "           use_rsa: $use_rsa"
   echod "            stores: $stores"
@@ -1006,8 +995,8 @@ create_certificate_signing_request() {
   echod "Starting create_certificate_signing_request with parameters:"
   echod "      key_name: $key_name"
   echod "      key_file: $key_file"
-  echod "    passphrase: $([ -n "$passphrase" ] && echo "[SET]" || echo "[EMPTY]")"
-  echod "          salt: $([ -n "$salt" ] && echo "[SET]" || echo "[EMPTY]")"
+  echod "    passphrase: $passphrase"
+  echod "          salt: $salt"
   echod "       csr_out: $csr_out"
   echod "       cfg_out: $cfg_out"
   echod "       domains: $domains"

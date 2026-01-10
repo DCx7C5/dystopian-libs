@@ -188,6 +188,18 @@ reset_dystopian_crypto() {
   fi
 }
 
+
+traverse_certchain() {
+  index="$1" type=
+  while [ "$CHAIN_INCLUDE" != "$type" ] && [ -n "$index" ]; do
+    cert_file="$(get_value_from_index "$index" "cert")"
+    type="$(get_value_from_index "$index" "type")"
+    printf "%s\n" "$(cat "$cert_file")"
+    index="$(get_value_from_index "$index" "issuer")"
+  done
+}
+
+
 # Maintenance and utility functions
 show_index() {
     show_keys="${1:-false}"
