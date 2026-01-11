@@ -226,11 +226,14 @@ _create_and_verify_key() {
   passphrase="$2"
   salt_out="$3"
   use_rsa="$4"
+  no_scrypt="$5"
 
   algo="EC"
   key_opt="ec_paramgen_curve:secp384r1"
   [ "$use_rsa" = true ] && algo="RSA" && key_opt="rsa_keygen_bits:4096"
   algo_param=$(echo "$algo" | tr "[:upper:]" "[:lower:]")
+  pkcs_param='-scrypt -scrypt_N 16384 -scrypt_r 8 -scrypt_p 1'
+  [ "$no_scrypt" = true ] && pkcs_param='-iter 3220000'
 
   echod "Starting _create_and_verify_key with parameters:"
   echod "    key_out: $key_out"
@@ -239,22 +242,21 @@ _create_and_verify_key() {
   echod "    use_rsa: $use_rsa"
   echod "       algo: $algo"
   echod " algo_param: $algo_param"
+  echod " pkcs_param: $pkcs_param"
   echod "    key_opt: $key_opt"
+  echod "  no_scrypt: $no_scrypt"
 
   (
     echoi "Generating encrypted $algo:$key_opt private key..."
     echov "Encrypting with ARGON2ID-derived key..."
-    openssl genpkey -algorithm "$algo" -pkeyopt "$key_opt" | \
+    openssl genpkey -algorithm "$algo" -pkeyopt "$key_opt" 2>/dev/null | \
     openssl pkcs8 \
             -topk8 \
             -in /dev/stdin \
             -out "$key_out" \
-            -scrypt \
-            -scrypt_N 16384 \
-            -scrypt_r 8 \
-            -scrypt_p 1 \
             -outform "${KEYOUTFORM}" \
-            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "private key encryption" "true")" || {
+            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "private key encryption" "true")" \
+            ${pkcs_param} || {
       echoe "Failed to generate encrypted $algo private key using $key_opt"
       return 1
     }
@@ -426,11 +428,14 @@ _create_and_verify_sscert() {
   salt="$4"
   ca_conf_out="$5"
   days="$6"
+  no_scrypt="$7"
 
   algo="EC"
   key_opt="ec_paramgen_curve:secp384r1"
   [ "$use_rsa" = true ] && algo="RSA" && key_opt="rsa_keygen_bits:4096"
   algo_param=$(echo "$algo" | tr "[:upper:]" "[:lower:]")
+  pkcs_param='-scrypt -scrypt_N 16384 -scrypt_r 8 -scrypt_p 1'
+  [ "$no_scrypt" = true ] && pkcs_param='-iter 3220000'
 
   echod "Starting _create_and_verify_sscert with parameters:"
   echod "   ca_key_out: $ca_key_out"
@@ -443,6 +448,7 @@ _create_and_verify_sscert() {
   echod "         algo: $algo"
   echod "      key_opt: $key_opt"
   echod "   algo_param: $algo_param"
+  echod "    no_scrypt: $no_scrypt"
 
   (
     echoi "Generating self-signed & encrypted certificate"
@@ -463,12 +469,9 @@ _create_and_verify_sscert() {
             -topk8 \
             -in /dev/stdin \
             -out "$ca_key_out" \
-            -scrypt \
-            -scrypt_N 16384 \
-            -scrypt_r 8 \
-            -scrypt_p 1 \
             -outform "${KEYOUTFORM}" \
-            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt" "CA private key encryption" "true")" 2>/dev/null || {
+            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt" "CA private key encryption" "true")" 2>/dev/null \
+            ${pkcs_param} || {
       echoe "Failed to generate self-signed certificate"
       return 1
     }
@@ -588,6 +591,7 @@ create_private_key() {
   salt_out="${4:-$(absolutepathidx "$DC_KEY/key.salt" "$index")}"
 
   use_rsa="${5:-false}"
+  no_scrypt="${6:-"${NO_SCRYPT:-false}"}"
 
   echoi "Creating openssl private key..."
 
@@ -598,6 +602,7 @@ create_private_key() {
   echod "    passphrase: $passphrase"
   echod "      salt_out: $salt_out"
   echod "       use_rsa: $use_rsa"
+  echod "     no_scrypt: $no_scrypt"
 
   # Validate inputs
   if [ -z "$key_name" ] && [ -z "$key_out" ]; then
@@ -609,7 +614,7 @@ create_private_key() {
   for d in "$(dirname "$key_out")" "$(dirname "$salt_out")"; do
     if [ ! -d "$d" ]; then
       echow "Output directory $d does not exist"
-      mkdir -p "$d" || {
+      mkdir -p -- "$d" || {
         echoe "Creating directory failed: $d"
         return 1
       }
@@ -631,8 +636,8 @@ create_private_key() {
   echosv "Creating saltfile: $salt_out successful"
 
   # Generate and verify key
-  echod "Calling _create_and_verify_key \"$key_out\" \"$passphrase\" \"$salt_out\" \"$use_rsa\""
-  _create_and_verify_key "$key_out" "$passphrase" "$salt_out" "$use_rsa" || {
+  echod "Calling _create_and_verify_key \"$key_out\" \"$passphrase\" \"$salt_out\" \"$use_rsa\" \"$no_scrypt\""
+  _create_and_verify_key "$key_out" "$passphrase" "$salt_out" "$use_rsa" "$no_scrypt" || {
     echoe "Failed to generate private key for $key_out"
     if [ -n "$salt_out" ] && [ ! -f "$salt_out" ]; then
       echoe "Salt file $salt_out does not exist"
@@ -650,11 +655,15 @@ create_private_key() {
   add_to_ssl_certs "$index" "salt" "$salt_out"
   add_to_ssl_certs "$index" "name" "$1"
 
+  # Update algorithm type EC/RSA
   if [ "$use_rsa" = "true" ]; then
     add_to_ssl_certs "$index" "algo" "RSA"
   else
     add_to_ssl_certs "$index" "algo" "EC"
   fi
+
+  # Update key derivation method
+  add_to_ssl_certs "$index" 'kdf' "$([ "$no_scrypt" = true ] && printf 'pbkdf2' || printf 'scrypt')"
 
   echos "Private key creation successful"
   return 0
@@ -728,6 +737,7 @@ create_certificate_authority() {
 
   use_rsa="${25:-false}"
   stores="${26:-system}"
+  no_scrypt="${27:-"${NO_SCRYPT:-false}"}"
 
   echod "Starting create_certificate_authority with parameters:"
   echod "           ca_name: $ca_name"
@@ -754,6 +764,7 @@ create_certificate_authority() {
   echod "     fullchain_out: $fullchain_out"
   echod "           use_rsa: $use_rsa"
   echod "            stores: $stores"
+  echod "         no_scrypt: $no_scrypt"
 
   # Validate root CA parameters for intermediate CA
   if [ "$intermediate" = "true" ]; then
@@ -765,6 +776,7 @@ create_certificate_authority() {
   else
     ca_storage_type="root"
   fi
+
 
   # Set default file paths
   ca_cert_dir="$(dirname -- "$ca_cert_out")"
@@ -791,7 +803,6 @@ create_certificate_authority() {
   echod "Final ca_conf_file: $ca_conf_out"
   [ -n "$ca_salt_out" ] && echod "Final ca_salt_file: $ca_salt_out"
   [ "$intermediate" = "true" ] && echod "Final ca_csr_file: $ca_csr_out"
-
 
   # Generate salt if needed
   echod "Calling _create_saltfile with $ca_salt_out"
@@ -821,7 +832,7 @@ create_certificate_authority() {
     echoi "Generating self-signed root CA certificate"
     # Create self signed cert and key
     echod "Calling _create_and_verify_sscert with: $ca_key_out, $ca_cert_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $days"
-    if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$days"; then
+    if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$days" "$no_scrypt"; then
       rm -f -- "$ca_key_out" "$ca_cert_out" || true
       echoe "Failed to generate self-signed CA certificate"
       return 1
@@ -832,7 +843,7 @@ create_certificate_authority() {
     echoi "Generating intermediate CA certificate signed by $root_ca_index"
     # Create and verify key
     echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $use_rsa"
-    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$use_rsa"; then
+    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$use_rsa" "$no_scrypt"; then
       echoe "Failed to generate CA private key"
       return 1
     fi
@@ -943,6 +954,12 @@ create_certificate_authority() {
   # Display CA information
   ca_subject=$(openssl x509 -in "$ca_cert_out" -noout -subject | sed 's/subject=//')
   ca_issuer=$(openssl x509 -in "$ca_cert_out" -noout -issuer | sed 's/issuer=//')
+  _cn=$(printf "%s" "$ca_subject" | awk -F', ' '{print $NF}' | sed 's/CN=//')
+
+  add_to_ca_database "$ca_storage_type" "$index" "cn" "$_cn"
+
+  # Update key derivation method
+  add_to_ca_database "$ca_storage_type" "$index" "kdf" "$([ "$no_scrypt" = true ] && printf "pbkdf2" || printf "scrypt")"
 
   echov "CA Details:"
   echov "  Issuer: $ca_issuer"
@@ -1214,15 +1231,18 @@ sign_certificate_request() {
   add_to_ssl_certs "$index" "fingerprint" "$fingerprint"
 
   # Display certificate information
-  echoi "Displaying certificate details"
-  echoi "  Subject: $(openssl x509 -in "$cert_out" -noout -subject | sed 's/subject=//')"
-  echoi "  Serial:  $(openssl x509 -in "$cert_out" -noout -serial | sed 's/serial=//')"
+  subject=$(openssl x509 -in "$cert_out" -noout -subject | sed 's/subject=//')
+  echov "Displaying certificate details"
+  echov "  Subject: $subject"
+  echov "  Serial:  $(openssl x509 -in "$cert_out" -noout -serial | sed 's/serial=//')"
   #openssl x509 -in "$cert_out" -noout -dates | sed 's/^/  /'
+  _cn=$(printf "%s" "$subject" | awk -F', ' '{print $NF}' | sed 's/CN=//')
+  add_to_ssl_certs "$index" "cn" "$_cn"
 
   # Show SAN if present
   san=$(openssl x509 -in "$cert_out" -noout -ext subjectAltName 2>/dev/null | grep -A1 "Subject Alternative Name" | tail -n1)
   if [ -n "$san" ]; then
-    echoi "  SAN: $san"
+    echov "  SAN: $san"
   fi
 
   # Create certificate chain if CA certificate is available
