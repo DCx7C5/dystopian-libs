@@ -227,6 +227,7 @@ _create_and_verify_key() {
   salt_out="$3"
   use_rsa="$4"
   no_scrypt="$5"
+  validate="$6"
 
   algo="EC"
   key_opt="ec_paramgen_curve:secp384r1"
@@ -245,6 +246,7 @@ _create_and_verify_key() {
   echod " pkcs_param: $pkcs_param"
   echod "    key_opt: $key_opt"
   echod "  no_scrypt: $no_scrypt"
+  echod "   validate: $validate"
 
   (
     echoi "Generating encrypted $algo:$key_opt private key..."
@@ -262,19 +264,21 @@ _create_and_verify_key() {
     }
     echosv "Private key generation successful"
   )
-  (
-    echov "Validating generated private key..."
-    openssl ${algo_param} \
-            -in "$key_out" \
-            -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "encrypted private key validation" "false")" \
-            -check \
-            -noout >/dev/null 2>&1 || {
-      echoe "Failed to verify generated private key"
-      return 1
-    }
-    unset derived
-    echosv "Private key validation successful"
-  )
+  if [ "$validate" = true ]; then
+    (
+      echov "Validating generated private key..."
+      openssl ${algo_param} \
+              -in "$key_out" \
+              -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "encrypted private key validation" "false")" \
+              -check \
+              -noout >/dev/null 2>&1 || {
+        echoe "Failed to verify generated private key"
+        return 1
+      }
+      unset derived
+      echosv "Private key validation successful"
+    )
+  fi
   status=$?
   echod "Private key creation subshell exited with status: $status"
   if [ "$status" -eq 0 ]; then
@@ -429,6 +433,7 @@ _create_and_verify_sscert() {
   ca_conf_out="$5"
   days="$6"
   no_scrypt="$7"
+  validate="$8"
 
   algo="EC"
   key_opt="ec_paramgen_curve:secp384r1"
@@ -449,6 +454,7 @@ _create_and_verify_sscert() {
   echod "      key_opt: $key_opt"
   echod "   algo_param: $algo_param"
   echod "    no_scrypt: $no_scrypt"
+  echod "     validate: $validate"
 
   (
     echoi "Generating self-signed & encrypted certificate"
@@ -499,19 +505,21 @@ _create_and_verify_sscert() {
     fi
     echov "Self-signed certificate chain verification successful"
   )
-  (
-    echov "Validating generated CA private key..."
-    openssl ${algo_param} \
-            -in "$ca_key_out" \
-            -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt" 'encrypted CA private key validation' "false")" \
-            -check \
-            -noout >/dev/null 2>&1 || {
-      echoe "Failed to verify generated CA private key"
-      return 1
-    }
-    unset derived
-    echosv "Private key validation successful"
-  )
+  if [ "$validate" = true ]; then
+    (
+      echov "Validating generated CA private key..."
+      openssl ${algo_param} \
+              -in "$ca_key_out" \
+              -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt" 'encrypted CA private key validation' "false")" \
+              -check \
+              -noout >/dev/null 2>&1 || {
+        echoe "Failed to verify generated CA private key"
+        return 1
+      }
+      unset derived
+      echosv "Private key validation successful"
+    )
+  fi
   status=$?
   echod "Self-signed certificate subshell exited with status: $status"
   if [ "$status" -eq 0 ]; then
@@ -636,8 +644,8 @@ create_private_key() {
   echosv "Creating saltfile: $salt_out successful"
 
   # Generate and verify key
-  echod "Calling _create_and_verify_key \"$key_out\" \"$passphrase\" \"$salt_out\" \"$use_rsa\" \"$no_scrypt\""
-  _create_and_verify_key "$key_out" "$passphrase" "$salt_out" "$use_rsa" "$no_scrypt" || {
+  echod "Calling _create_and_verify_key \"$key_out\" \"$passphrase\" \"$salt_out\" \"$use_rsa\" \"$no_scrypt\" \"$validate\""
+  _create_and_verify_key "$key_out" "$passphrase" "$salt_out" "$use_rsa" "$no_scrypt" "$validate" || {
     echoe "Failed to generate private key for $key_out"
     if [ -n "$salt_out" ] && [ ! -f "$salt_out" ]; then
       echoe "Salt file $salt_out does not exist"
@@ -738,6 +746,7 @@ create_certificate_authority() {
   use_rsa="${25:-false}"
   stores="${26:-system}"
   no_scrypt="${27:-"${NO_SCRYPT:-false}"}"
+  validate="${28:-${VALIDATE_KEYS:-false}}"
 
   echod "Starting create_certificate_authority with parameters:"
   echod "           ca_name: $ca_name"
@@ -765,6 +774,7 @@ create_certificate_authority() {
   echod "           use_rsa: $use_rsa"
   echod "            stores: $stores"
   echod "         no_scrypt: $no_scrypt"
+  echod "          validate: $validate"
 
   # Validate root CA parameters for intermediate CA
   if [ "$intermediate" = "true" ]; then
@@ -831,8 +841,8 @@ create_certificate_authority() {
   if [ "$intermediate" = "false" ]; then
     echoi "Generating self-signed root CA certificate"
     # Create self signed cert and key
-    echod "Calling _create_and_verify_sscert with: $ca_key_out, $ca_cert_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $days"
-    if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$days" "$no_scrypt"; then
+    echod "Calling _create_and_verify_sscert with: $ca_key_out, $ca_cert_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $days, $no_scrypt, $validate"
+    if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$days" "$no_scrypt" "$validate"; then
       rm -f -- "$ca_key_out" "$ca_cert_out" || true
       echoe "Failed to generate self-signed CA certificate"
       return 1
@@ -842,16 +852,16 @@ create_certificate_authority() {
 
     echoi "Generating intermediate CA certificate signed by $root_ca_index"
     # Create and verify key
-    echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $use_rsa"
-    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$use_rsa" "$no_scrypt"; then
+    echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $use_rsa, $no_scrypt, $validate"
+    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$use_rsa" "$no_scrypt" "$validate"; then
       echoe "Failed to generate CA private key"
       return 1
     fi
     echosv "Creating and verifying KEY successful"
 
     # Create csr and verify
-    echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $use_rsa"
-    if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$use_rsa"; then
+    echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $use_rsa, $no_scrypt, $validate"
+    if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$use_rsa" "$validate"; then
       echoe "Failed to generate CSR for intermediate CA"
       return 1
     fi
