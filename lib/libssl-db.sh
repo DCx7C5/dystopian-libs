@@ -196,19 +196,25 @@ reset_ssl_index() {
 
 set_defaultCA() {
   index="$1"
-
-  # Check index exists in database
-  if ! has_index "$index"; then
-    echoe "Index: $index not found in database."
-    return 1
-  fi
-
   temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
-  jq -e --arg idx "$index" '.defaultCA = $idx' -- "$DC_DB" > "$temp_file" || {
-    echoe "Setting $index as defaultCA failed"
-    rm -f -- "$temp_file"
-    return 1
-  }
+  if [ -z "$index" ]; then
+    jq -e '.defaultCA = ""' -- "$DC_DB" > "$temp_file" || {
+      echoe "Setting defaultCA empty failed"
+      rm -f -- "$temp_file"
+      return 1
+    }
+  else
+    # Check index exists in database
+    if ! has_index "$index"; then
+      echoe "Index: $index not found in database."
+      return 1
+    fi
+    jq -e --arg idx "$index" '.defaultCA = $idx' -- "$DC_DB" > "$temp_file" || {
+      echoe "Setting $index as defaultCA failed"
+      rm -f -- "$temp_file"
+      return 1
+    }
+  fi
 
   mv -- "$temp_file" "$DC_DB" || {
     echoe "Overwriting database with temporary db failed"
@@ -222,20 +228,27 @@ set_defaultCA() {
 
 set_defaultRootCA() {
   index="$1"
-
-  # Check index exists in database
-  if ! has_index "$index"; then
-    echoe "Index: $index not found in database."
-    return 1
-  fi
-
   temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
-  jq -e --arg idx "$index" '.defaultRootCA = $idx' -- "$DC_DB" > "$temp_file" || {
-    echoe "Setting $index as defaultRootCA failed"
-    rm -f -- "$temp_file"
-    return 1
-  }
 
+  if [ -z "$index" ]; then
+    jq -e'.defaultRootCA = ""' -- "$DC_DB" > "$temp_file" || {
+      echoe "Setting defaultRootCA empty failed"
+      rm -f -- "$temp_file"
+      return 1
+    }
+  else
+    # Check index exists in database
+    if ! has_index "$index"; then
+      echoe "Index: $index not found in database."
+      return 1
+    fi
+
+    jq -e --arg idx "$index" '.defaultRootCA = $idx' -- "$DC_DB" > "$temp_file" || {
+      echoe "Setting $index as defaultRootCA failed"
+      rm -f -- "$temp_file"
+      return 1
+    }
+  fi
   mv -- "$temp_file" "$DC_DB" || {
     echoe "Overwriting database with temporary db failed"
     rm -f -- "$temp_file"
@@ -427,7 +440,7 @@ has_index() {
     if jq -e \
        --arg idx "$1" \
        --arg typ "$2" \
-       '.ssl.certs[$idx]? // empty | (type == "object")' -- "$DC_DB" >/dev/null 2>&1; then
+       '.ssl[$typ][$idx]? // empty | (type == "object")' -- "$DC_DB" >/dev/null 2>&1; then
       return 0
     fi
   elif [ $# -eq 1 ]; then
@@ -570,13 +583,13 @@ delete_ssl_index() {
   }
   cert_type="$(get_cert_type "$1")"
   if [ -n "$cert_type" ]; then
-    if ! jq -e \
+    jq -e \
             --arg idx "$1" \
             --arg ctype "$cert_type" \
-            'del(.ssl[$ctype][$idx])' -- "$DC_DB" > "$temp_file"; then
+            'del(.ssl[$ctype][$idx])' -- "$DC_DB" > "$temp_file" || {
       echoe "Something went wrong while deleting the index."
       return 1
-    fi
+    }
   fi
   mv -- "$temp_file" "$DC_DB" || {
     echoe "Not able to save temporary db as database file."

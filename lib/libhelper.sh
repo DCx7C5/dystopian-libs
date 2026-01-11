@@ -263,7 +263,7 @@ cleanup_dcrypto_files() {
   cleanup_passphrase="${7:+$([ -s "$7" ] && absolutepath "$7")}"
   cleanup_salt="${8:+$([ -s "$8" ] && absolutepath "$8")}"
   cleanup_salt="${cleanup_salt:-"${cleanup_index:+"$(get_value_from_ca_index "$cleanup_index" "salt")"}"}"
-  cleanup_key="${cleanup_salt:+${cleanup_passphrase:+${cleanup_index:+$(get_value_from_index "$cleanup_index" "key")}}}"
+  cleanup_key="${cleanup_salt:+${cleanup_index:+$(get_value_from_index "$cleanup_index" "key")}}"
 
   echod "Starting cleanup_dcrypto_files with parameters:"
   echod "        cleanup_index: $cleanup_index"
@@ -274,18 +274,19 @@ cleanup_dcrypto_files() {
   echod " cleanup_keep_backups: $cleanup_keep_backups"
   echod "   cleanup_passphrase: $cleanup_passphrase"
   echod "         cleanup_salt: $cleanup_salt"
+  echod "          cleanup_key: $cleanup_key"
   echod "            DC_CFGDIR: $DC_CFGDIR"
   echod "                DC_DB: $DC_DB"
 
-  echoi "dystopian-crypto Cleanup${cleanup_dry_run:+$([ "$cleanup_dry_run" = "true" ] && echo "DRY RUN")}"
+  echoi "dystopian-crypto Cleanup${cleanup_dry_run:+$([ "$cleanup_dry_run" = true ] && echo "DRY RUN")}"
   echoi "=============="
 
-  if [ -n "$cleanup_salt" ] && [ -z "$cleanup_passphrase" ]; then
-    echoe "Entry is protected. Please provide key passphrase."
-    return 1
-  elif [ -z "$cleanup_salt" ] && [ -n "$cleanup_passphrase" ]; then
+  if [ -z "$cleanup_salt" ] && [ -n "$cleanup_passphrase" ]; then
     echow "Entry is not protected. Passphrase parameter not necessary!"
   fi
+
+  defaultCA=$(get_defaultCA)
+  defaultRootCA=$(get_defaultRootCA)
 
   # Clean specific index
   if [ -n "$cleanup_index" ]; then
@@ -294,14 +295,14 @@ cleanup_dcrypto_files() {
       echoe "Index $cleanup_index does not exist in $DC_DB"
       return 1
     fi
-    if [ "$cleanup_dry_run" != "true" ]; then
+    if [ "$cleanup_dry_run" != true ]; then
       if [ -s "$cleanup_salt" ]; then
-        algo=$(get_value_from_index "$cleanup_index" "algo")
+        algo=$(get_value_from_index "$cleanup_index" 'algo')
         [ "$algo" = 'EC' ] && key_opt="ec_paramgen_curve:secp384r1" || key_opt="rsa_keygen_bits:4096"
         algo_param=$(echo "$algo" | tr "[:upper:]" "[:lower:]")
         openssl "${algo_param}" \
                 -in "$cleanup_key" \
-                -passin "pass:$(derive_key_from_passphrase "$cleanup_passphrase" "$cleanup_salt" 'cleanup process execution' "false")" \
+                -passin "pass:$(derive_key_from_passphrase "$cleanup_passphrase" "$cleanup_salt" 'cleanup process execution' "false" | tr -d '\n\r')" \
                 -check \
                 -noout >/dev/null 2>&1 || {
           echoe "Passphrase verification failed. Wrong passphrase."
@@ -314,6 +315,13 @@ cleanup_dcrypto_files() {
           echoe "Failed to clean index $cleanup_index"
           return 1
       }
+
+      if [ "$defaultCA" = "$cleanup_index" ]; then
+        set_defaultCA ""
+      elif [ "$defaultRootCA" = "$cleanup_index" ]; then
+        set_defaultRootCA ""
+      fi
+
       echos "Index $cleanup_index cleaned successfully"
     else
       echov "Dry run: Would clean index $cleanup_index"
@@ -348,7 +356,7 @@ cleanup_dcrypto_files() {
           ;;
       esac
       idx="$(find_index_by_key_value "$k" "$file_path")"
-      if [ -z "$idx" ] || [ "$idx" = "" ]; then
+      if [ -z "$idx" ]; then
         found_orphaned=true
         echoi "Orphaned file: $file_path"
         if [ "$cleanup_dry_run" != "true" ]; then
@@ -1222,7 +1230,7 @@ _manage_system_truststore() {
   type="$2"
   ck_path="$3"
   process="$4"
-  ca_name="$5"
+  name="$5"
   perms="444"
 
   if [ "$type" != "cert" ]; then
@@ -1292,7 +1300,7 @@ _manage_system_truststore() {
 
     # Preferred: trust anchor --remove
     if command -v trust >/dev/null 2>&1; then
-      if trust anchor --remove "$(trust list | grep -B3 "$ca_name" | head -1)" >/dev/null 2>&1; then
+      if trust anchor --remove "$(trust list | grep -B3 "$name" | head -1)" >/dev/null 2>&1; then
           echosv "Certificate uninstalled from system trust store via 'trust anchor --remove'."
           return 0
       fi
@@ -1338,10 +1346,10 @@ _manage_system_truststore() {
         return 1
     fi
 
-    if [ "$removed" = 0 ]; then
-        echow "Certificate not found in system trust store – assuming already uninstalled."
+    if [ "$removed" -gt 0 ]; then
+        echov "Removed $removed certificates from system trust."
     fi
-    echosv "Uninstallation from system trust store completed"
+    echosv "Uninstallation from system trust store completed."
 
   else
       echoe "Invalid process: $process"
@@ -1426,13 +1434,13 @@ _manage_browser_truststore() {
 
 
 manage_truststore() {
-  ca_name="$1"
-  index=$(echo "$ca_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
+  name="$1"
+  index=$(echo "$1" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
   process="$2"
   stores="${3:-}"
   cmd="${4:-false}"
 
-  if [ -z "$ca_name" ]; then
+  if [ -z "$name" ]; then
     echoe "Certificate name is required"
     return 1
   elif [ -z "$process" ]; then
@@ -1448,12 +1456,12 @@ manage_truststore() {
 
   ca_stor_type=$(get_value_from_index "$index" "type")
   case "$index" in
-    "$ca_name") ca_name=$(get_value_from_index "$index" "name") ;;
+    "$name") name=$(printf "%s" "$(get_value_from_index "$index" "cn")" | sed 's/\ /\_/g') ;;
   esac
 
   echod "Starting manage_truststore with parameters:"
   echod "            index: $index"
-  echod "          ca_name: $ca_name"
+  echod "             name: $name"
   echod "          process: $process"
   echod "           stores: $stores"
   echod "     ca_cert_path: $ca_cert_path"
@@ -1487,18 +1495,18 @@ manage_truststore() {
     for i in $stores; do
       case "$i" in
         *[Ss][Yy][Ss]*)
-          echod "Calling _manage_system_truststore \"$index\" \"cert\" \"$ca_cert_path\" \"$process\" \"$ca_name\""
-          _manage_system_truststore "$index" "cert" "$ca_cert_path" "$process" "$ca_name"
+          echod "Calling _manage_system_truststore \"$index\" \"cert\" \"$ca_cert_path\" \"$process\" \"$name\""
+          _manage_system_truststore "$index" "cert" "$ca_cert_path" "$process" "$name"
           case $? in 0) : ;; *) status=1;; esac
           ;;
         *[Cc][Hh][Rr][Oo][Mm][Ee]*)
-          echod "Calling _manage_browser_truststore \"$ca_name\" \"$index\" \"chrome\" \"$ca_cert_path\" \"$process\""
-          _manage_browser_truststore "$ca_name" "$index" "chrome" "$ca_cert_path" "$process"
+          echod "Calling _manage_browser_truststore \"$name\" \"$index\" \"chrome\" \"$ca_cert_path\" \"$process\""
+          _manage_browser_truststore "$name" "$index" "chrome" "$ca_cert_path" "$process"
           case $? in 0) : ;; *) status=1 ;; esac
           ;;
         *[Ff][Ii][Rr][Ee]*|*[Ff][Oo][Xx]*)
-          echod "Calling _manage_browser_truststore \"$ca_name\" \"$index\" \"firefox\" \"$ca_cert_path\" \"$process\""
-          _manage_browser_truststore "$ca_name" "$index" "firefox" "$ca_cert_path" "$process"
+          echod "Calling _manage_browser_truststore \"$name\" \"$index\" \"firefox\" \"$ca_cert_path\" \"$process\""
+          _manage_browser_truststore "$name" "$index" "firefox" "$ca_cert_path" "$process"
           case $? in 0) : ;; *) status=1 ;; esac
           ;;
       esac
@@ -1609,9 +1617,6 @@ login_using_pbkdf2() {
 
   echov "Logging in using PBKDF2 challenge"
 
-  [ -z "$pass" ] && { echo "login_using_pbkdf2: password required" >&2; return 1; }
-  [ -z "$challenge" ] && { echo "login_using_pbkdf2: no challenge received" >&2; return 1; }
-
   iter1=$(echo "$challenge" | cut -d'$' -f2)
   salt1hex=$(echo "$challenge" | cut -d'$' -f3)
   iter2=$(echo "$challenge" | cut -d'$' -f4)
@@ -1622,7 +1627,7 @@ login_using_pbkdf2() {
             -keylen 32 \
             -kdfopt "hexsalt:$salt1hex" \
             -kdfopt "iter:$iter1" \
-            -kdfopt "pass:$(tr -d '\r\n' < "$pass")" \
+            -kdfopt "pass:$pass" \
             -kdfopt digest:SHA256 \
             PBKDF2 2>/dev/null | \
     tr -d '\n: ' | \
@@ -1642,16 +1647,14 @@ login_using_pbkdf2() {
   )
 
   response="${salt2hex}\$${hash2_hex}"
-
-  # Submit login
   if [ -n "$username" ]; then
-      post_data="username=$username&response=$response"
-  else
-      post_data="response=$response"
+    post_data="username=$username&response=$response"
+  elif [ -z "$username" ]; then
+    post_data="username=&response=$response"
   fi
 
-  echod "Calling curl $cparams -d $post_data $host/login_sid.lua?version=2 | sed -n (....)"
-  sid=$(curl ${cparams} -d "$post_data" "$host/login_sid.lua?version=2" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p')
+  echod "Calling curl $cparams -d $post_data $host/login_sid.lua$v2 | sed -n (....)"
+  sid=$(curl ${cparams} -d "$post_data" "$host/login_sid.lua$v2" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p')
 
   return 0
 }
@@ -1660,59 +1663,109 @@ login_using_pbkdf2() {
 login_using_md5() {
   host="${1%/}"
   username="${2:-}"
-  pass="${3:-$(tr -d '\r\n' < "$pass")}"
-  challenge="${4}"
+  pass="$3"
+  challenge="$4"
 
   echov "Logging in using MD5 challenge"
-
-  [ -z "$pass" ] && { echo "login_using_md5: password required" >&2; return 1; }
-  [ -z "$challenge" ] && { echo "login_using_md5: no challenge received" >&2; return 1; }
-
-  # Legacy MD5: challenge-password in UTF-16LE
-  echoe "chl: $challenge"
-  echoe "pass: $pass"
-  echoe "test: $(printf "%s" "$challenge-$pass")"
   md5hash=$(printf "%s" "$challenge-$pass" |
             iconv -f UTF-8 -t UTF-16LE |
-            md5sum |
-            cut -d' ' -f1)
-  echoe "DEBUG: $md5hash"
+            md5sum -b |
+            awk '{print substr($0,1,32)}')
+  response="$challenge-$md5hash"
 
-  echod "Calling curl $cparams $host/login_sid.lua?username$username&response=$challenge-$md5hash (....)"
-  curl ${cparams} "$host/login_sid.lua?username$username&response=$challenge-$md5hash" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p'
+  echod "Calling curl $cparams $host/login_sid.lua?username=$username&response=$response (....)"
+  sid=$(curl ${cparams} "$host/login_sid.lua?username=$username&response=$response" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p')
 
   return 0
 }
+
+
+_parse_host_certificate() {
+  devcert=$(echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -issuer -subject -noout)
+  subject_name=$(echo "$devcert" | grep -iE "^subject=" | sed 's/subject=CN=//')
+  issuer_name=$(echo "$devcert" | grep -iE "^issuer=" | awk -F', ' '{print $NF}' | sed 's/CN=//')
+  subject_idx=$(echo "$subject_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
+  issuer_idx=$(echo "$issuer_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
+
+  if ! has_index "$subject_idx"; then
+    echowv "Subject index not in data.json!"
+  fi
+
+  if ! has_index "$issuer_idx"; then
+    echowv "Issuer index not in data.json!"
+  fi
+}
+
+
+_validate_host_certificate() {
+
+  echov "Validating host certificate..."
+  ipcheck=$(echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -checkip "$1" -noout)
+
+  if printf "%s" "$ipcheck" | grep -qE "NOT" ;then
+    echoe "Device certificate verification failed. IP Address $2 doesn't match!"
+    return 1
+  fi
+  echosv "IP check successfull..."
+
+  hostcheck=$(echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -checkhost "$2" -noout)
+
+  if printf "%s" "$hostcheck" | grep -qE "NOT" ;then
+    echoe "Device certificate verification failed. Host $2 doesn't match!"
+    return 1
+  fi
+
+  echosv "Host check successfull..."
+  return 0
+}
+
+
+_check_host_cert_expired() {
+  echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -checkend 0 >/dev/null 2>&1 || {
+    echow "Certificate on $host is expired"
+    cparams="-sS -k"
+  }
+  return 0
+}
+
 
 # shellcheck disable=SC2086
 install_to_fritzbox() {
   proto="https"
   host="${1:-"192.168.178.1"}"
   host="$proto://${host%/}"
-  pass="$2"
-  username="$3"
-  certpass="$4"
-  name="$5"
+  pass="${2:+"$([ -s "$pass" ] && absolutepath "$2")"}"
+  pass="${pass:-$(prompt_passphrase "false" "FritzBox Login" | tr -d '\n\r')}"
+  username="${3:-}"
+  certpass="${4:+$([ -s "$certpass" ] && absolutepath "$4")}"
+  _name="$5"
 
-  index=$(echo "$name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
-  [ "$index" = "$name" ] && name="$(get_value_from_index "$index" "name")"
+  index=$(echo "$_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
+  [ "$index" = "$_name" ] && _name="$(get_value_from_index "$index" "name")"
+
+  key="${index:+$(get_value_from_index "$index" "key")}"
+  certsalt="${6:+$([ -s "$certsalt" ] && absolutepath "$6")}"
+  certsalt="${certsalt:-"$(get_value_from_index "$index" "salt")"}"
+  certpass="$(derive_key_from_passphrase "$certpass" "$certsalt" "$key encrypted privated key" "false" | tr -d '\n\r')"
+  tmpfile="$(mktemp -t XXXXXX)"
+  [ -s "$key" ] && openssl rsa -in "$key" -passin "pass:$certpass" -noout 2>/dev/null
 
   sid=
-  cparams=
+  cparams="-sS"
   v2="?version=2"
-  tmpfile="$(mktemp -t XXXXXX)"
   fallback=0
 
-  [ "${host:4:1}" != s ] && cparams="-s -S -k" || cparams="-s -S"
+  _parse_host_certificate "$1"
+  _check_host_cert_expired "$1"
 
-  echoi "Installing certificate: $name on $host"
+  echoi "Installing certificate: $_name on $host"
 
   echod "Starting install_to_fritzbox with:"
   echod "       host: $host"
   echod "       pass: $pass"
   echod "   username: $username"
   echod "   certpass: $certpass"
-  echod "       name: $name"
+  echod "   certsalt: $certsalt"
   echov "Requesting challenge..."
 
   blockt=999
@@ -1720,7 +1773,7 @@ install_to_fritzbox() {
     case "$blockt" in
       1|999)
         echod "Calling curl ${cparams} \"$host/login_sid.lua$v2\""
-        challenge_response=$(curl ${cparams} "$host/login_sid.lua$v2")
+        challenge_response=$(curl ${cparams} "$host/login_sid.lua$v2" 2>/dev/null)
         challenge="$(echo "$challenge_response" | sed -n 's/.*<Challenge>\([^<]*\)<\/Challenge>.*/\1/p')"
         prefix=$(echo "$challenge" | cut -d'$' -f1)
         [ "$prefix" != "2" ] && v2=
@@ -1752,12 +1805,12 @@ install_to_fritzbox() {
     echoe "Login failed. SID is missing or 0 ($sid)"
     return 1
   elif [ -n "$sid" ]; then
-    echosv "Login successful @$host"
+    echosv "Login successful @ $host"
     echod "Received SID: $sid."
   fi
 
-  certbundle=$(cat "$(get_value_from_index "$index" "fullchain")" "$(get_value_from_index "$index" "key")" | grep -v '^$')
-  certpass="${certpass:+$(derive_key_from_passphrase "$certpass" "$(get_value_from_index "$index" "salt")")}"
+  certbundle=$(cat "$(get_value_from_index "$index" "fullchain")" "$key" | grep -v '^$')
+
   boundary="---------------------------$(date +%Y%m%d%H%M%S)"
 
   cat <<EOD >>"${tmpfile}"
@@ -1776,17 +1829,41 @@ Content-Type: application/octet-stream
 ${certbundle}
 --${boundary}--
 EOD
-
   echov "Uploading certificate..."
   success_msgs="^ *(Das SSL-Zertifikat wurde erfolgreich importiert|Import of the SSL certificate was successful|El certificado SSL se ha importado correctamente|Le certificat SSL a été importé|Il certificato SSL è stato importato( correttamente)?|Import certyfikatu SSL został pomyślnie zakończony)\.$"
   echod "Calling curl $cparams \"$host/cgi-bin/firmwarecfg\" -H \"Content-type: multipart/form-data boundary=(...)\" --data-binary \"@${tmpfile}\" | cat (...)"
-  { curl ${cparams} "$host/cgi-bin/firmwarecfg" -H "Content-type: multipart/form-data boundary=${boundary}" --data-binary "@${tmpfile}" | cat | grep -qE "${success_msgs}"; } 2>/dev/null
-  if [ $? -eq 1 ]; then
+  curl ${cparams} "$host/cgi-bin/firmwarecfg" -H "Content-type: multipart/form-data boundary=${boundary}" --data-binary "@${tmpfile}" 2>/dev/null | cat | grep -qE "${success_msgs}" || {
     echoe "Certificate upload failed."
+    unset tmpfile tmpkey certpass certsalt pass
+    rm -f "$tmpfile" || true
     return 1
-  fi
-
-  echos "Successfully uploaded & installed certificate: $name on $host."
+  }
+  echosv "Successfully uploaded certificate..."
+  rm -f "$tmpfile" || true
+  echov "Verifying certificate @ $host ..."
+  unset tmpfile tmpkey certpass certsalt pass
+  _validate_host_certificate "$1" "$(get_value_from_index "$index" 'cn')" || {
+    echoe "Host certificate verification failed!"
+    return 1
+  }
+  echos "Successfully uploaded & installed certificate: $_name on $host."
   return 0
 }
 
+
+open_enpass_vault() {
+  vault_dir="$(find /home/"${DYSTOPIAN_USER}" -type d -name "Vaults" 2>/dev/null)"
+  vault_file="$(find "$vault_dir" -type f -name "*.enpassdb")"
+  vault_salt="$(hexdump -ve '1/1 "%.2X"' -n 16 "$vault_file")"
+  #key_hex="$(openssl enc -aes-256-cbc -md sha512 -pbkdf2 -iter 320000 \
+  #  -pass "pass:$([ -s "$1" ] && tr -d "\n" < "$(absolutepath "$1")" || prompt_passphrase "false" "Enpass Vault")" -S "$vault_salt" -nopad -P 2>/dev/null | \
+  #grep '^key=' | cut -d= -f2)"
+  sqlcipher "$vault_file" <<EOF
+PRAGMA key = "x'$key_hex'";
+PRAGMA cipher_compatibility = 3;
+PRAGMA cipher_page_size = 1024;
+.tables
+SELECT COUNT(*) FROM item WHERE deleted = 0 AND trashed = 0;
+
+EOF
+}
