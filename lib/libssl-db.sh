@@ -193,7 +193,6 @@ reset_ssl_index() {
 }
 
 
-
 set_defaultCA() {
   index="$1"
   temp_file=$(mktemp -- "${DC_DB}.XXXXXXX")
@@ -225,6 +224,7 @@ set_defaultCA() {
   echod "Updating defaultCA successful: $1"
   return 0
 }
+
 
 set_defaultRootCA() {
   index="$1"

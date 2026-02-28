@@ -21,6 +21,7 @@ derive_key_from_passphrase() {
   return 0
 }
 
+
 # shellcheck disable=SC2086
 _create_saltfile() {
   printf "%s" "$(openssl rand -hex 32)" > "$1"
@@ -30,6 +31,7 @@ _create_saltfile() {
   fi
   set_permissions_and_owner "$1" 440
 }
+
 
 _create_serialfile() {
   serial="$1"
@@ -41,6 +43,7 @@ _create_serialfile() {
   fi
   set_permissions_and_owner "$serial_out" 440
 }
+
 
 # Parses domains & ips from comma separated string
 _process_domains() {
@@ -63,6 +66,7 @@ _process_domains() {
   done
   set -- "$orig_args"
 }
+
 
 _create_sslconfig() {
   : "${dnsc:=1}"
@@ -99,6 +103,14 @@ _create_sslconfig() {
     common_name="$domains_ips"
   fi
 
+  # extension
+  if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
+    x509ext="x509_extensions = v3_ca"
+  elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
+    x509ext="x509_extensions = req_ext"
+  fi
+
+
   (
     # shellcheck disable=SC2030
     ssl_cfg=""
@@ -124,14 +136,11 @@ emailAddress = optional
 default_md = sha384
 prompt = no
 distinguished_name = req_distinguished_name
+${x509ext:-}
+[ req_distinguished_name ]
+
 EOF
 )
-    if [ "$cfg_type" = "intermediate" ] || [ "$cfg_type" = "root" ]; then
-      ssl_cfg="${ssl_cfg}\nx509_extensions = v3_ca\n\n"
-    elif [ "$cfg_type" = "server" ] || [ "$cfg_type" = "client" ]; then
-      ssl_cfg="${ssl_cfg}\nreq_extensions = req_ext\n\n"
-    fi
-    ssl_cfg="${ssl_cfg}[ req_distinguished_name ]\n"
 
     if [ -n "$country" ]; then
       ssl_cfg="${ssl_cfg}C = ${country}\n"
@@ -227,14 +236,25 @@ _create_and_verify_key() {
   salt_out="$3"
   use_rsa="$4"
   no_scrypt="$5"
-  validate="$6"
+  use_tpm="$6"
 
-  algo="EC"
-  key_opt="ec_paramgen_curve:secp384r1"
-  [ "$use_rsa" = true ] && algo="RSA" && key_opt="rsa_keygen_bits:4096"
+  if [ "$use_rsa" = false ] || [ -z "$use_rsa" ]; then
+    algo='EC'
+    key_opt='ec_paramgen_curve:secp384r1'
+  elif [ "$use_rsa" = true ]; then
+    algo='RSA'
+    key_opt='rsa_keygen_bits:4096'
+  fi
+
   algo_param=$(echo "$algo" | tr "[:upper:]" "[:lower:]")
   pkcs_param='-scrypt -scrypt_N 16384 -scrypt_r 8 -scrypt_p 1'
   [ "$no_scrypt" = true ] && pkcs_param='-iter 3220000'
+
+  if [ "$use_tpm" = true ]; then
+    tpm_param="-provider tpm2 -provider base "
+    [ "$algo" = 'EC' ] && key_opt='ec_paramgen_curve:prime256v1'
+    [ "$algo" = 'RSA' ] && key_opt='rsa_keygen_bits:2048'
+  fi
 
   echod "Starting _create_and_verify_key with parameters:"
   echod "    key_out: $key_out"
@@ -246,7 +266,6 @@ _create_and_verify_key() {
   echod " pkcs_param: $pkcs_param"
   echod "    key_opt: $key_opt"
   echod "  no_scrypt: $no_scrypt"
-  echod "   validate: $validate"
 
   (
     echoi "Generating encrypted $algo:$key_opt private key..."
@@ -257,28 +276,25 @@ _create_and_verify_key() {
             -in /dev/stdin \
             -out "$key_out" \
             -outform "${KEYOUTFORM}" \
-            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "private key encryption" "true")" \
-            ${pkcs_param} || {
+            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "private key encryption" 'true')" \
+            ${pkcs_param} 2>/dev/null || {
       echoe "Failed to generate encrypted $algo private key using $key_opt"
       return 1
     }
-    echosv "Private key generation successful"
   )
-  if [ "$validate" = true ]; then
-    (
-      echov "Validating generated private key..."
-      openssl ${algo_param} \
-              -in "$key_out" \
-              -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "encrypted private key validation" "false")" \
-              -check \
-              -noout >/dev/null 2>&1 || {
-        echoe "Failed to verify generated private key"
-        return 1
-      }
-      unset derived
-      echosv "Private key validation successful"
-    )
-  fi
+  (
+    # Validate generated key
+    openssl ${algo_param} \
+            -in "$key_out" \
+            -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt_out" "private key encryption" 'false')" \
+            -check \
+            -noout >/dev/null 2>&1 || {
+      echoe "Failed to verify generated private key"
+      return 1
+    }
+    unset derived
+    echosv "Private key creation & verification successful"
+  )
   status=$?
   echod "Private key creation subshell exited with status: $status"
   if [ "$status" -eq 0 ]; then
@@ -290,6 +306,12 @@ _create_and_verify_key() {
     }
     return 1
   fi
+}
+
+
+_format_and_encrypt_key() {
+  # format="${1:-pkcs8}"
+  :
 }
 
 
@@ -433,14 +455,24 @@ _create_and_verify_sscert() {
   ca_conf_out="$5"
   days="$6"
   no_scrypt="$7"
-  validate="$8"
 
-  algo="EC"
-  key_opt="ec_paramgen_curve:secp384r1"
-  [ "$use_rsa" = true ] && algo="RSA" && key_opt="rsa_keygen_bits:4096"
+  if [ "$use_rsa" = false ] || [ -z "$use_rsa" ]; then
+    algo='EC'
+    key_opt='ec_paramgen_curve:secp384r1'
+  elif [ "$use_rsa" = true ]; then
+    algo='RSA'
+    key_opt='rsa_keygen_bits:4096'
+  fi
+
   algo_param=$(echo "$algo" | tr "[:upper:]" "[:lower:]")
   pkcs_param='-scrypt -scrypt_N 16384 -scrypt_r 8 -scrypt_p 1'
   [ "$no_scrypt" = true ] && pkcs_param='-iter 3220000'
+
+  if [ "$use_tpm" = true ]; then
+    tpm_param="-provider tpm2 -provider base "
+    [ "$algo" = 'EC' ] && key_opt='ec_paramgen_curve:prime256v1'
+    [ "$algo" = 'RSA' ] && key_opt='rsa_keygen_bits:2048'
+  fi
 
   echod "Starting _create_and_verify_sscert with parameters:"
   echod "   ca_key_out: $ca_key_out"
@@ -454,7 +486,7 @@ _create_and_verify_sscert() {
   echod "      key_opt: $key_opt"
   echod "   algo_param: $algo_param"
   echod "    no_scrypt: $no_scrypt"
-  echod "     validate: $validate"
+  echod "    tpm_param: $tpm_param"
 
   (
     echoi "Generating self-signed & encrypted certificate"
@@ -470,18 +502,31 @@ _create_and_verify_sscert() {
             -sha384 \
             -extensions v3_ca \
             -outform "${CERTOUTFORM}" \
+            ${tpm_param} \
             -noenc 2>/dev/null | \
     openssl pkcs8 \
             -topk8 \
             -in /dev/stdin \
             -out "$ca_key_out" \
             -outform "${KEYOUTFORM}" \
-            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt" "CA private key encryption" "true")" 2>/dev/null \
-            ${pkcs_param} || {
+            -passout "pass:$(derive_key_from_passphrase "$passphrase" "$salt" "CA private key encryption" 'true')" \
+            ${pkcs_param} 2>/dev/null || {
       echoe "Failed to generate self-signed certificate"
       return 1
     }
-
+  )
+  (
+    openssl ${algo_param} \
+            -in "$ca_key_out" \
+            -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt" 'CA private key encryption' 'false')" \
+            -check \
+            -noout >/dev/null 2>&1 || {
+      echoe "Failed to verify generated CA private key"
+      return 1
+    }
+    echosv "Private key validation successful"
+  )
+  (
     # Check if certificate was created
     if [ ! -f "$ca_cert_out" ]; then
       echoe "Certificate file $ca_cert_out was not created"
@@ -505,21 +550,8 @@ _create_and_verify_sscert() {
     fi
     echov "Self-signed certificate chain verification successful"
   )
-  if [ "$validate" = true ]; then
-    (
-      echov "Validating generated CA private key..."
-      openssl ${algo_param} \
-              -in "$ca_key_out" \
-              -passin "pass:$(derive_key_from_passphrase "$passphrase" "$salt" 'encrypted CA private key validation' "false")" \
-              -check \
-              -noout >/dev/null 2>&1 || {
-        echoe "Failed to verify generated CA private key"
-        return 1
-      }
-      unset derived
-      echosv "Private key validation successful"
-    )
-  fi
+
+
   status=$?
   echod "Self-signed certificate subshell exited with status: $status"
   if [ "$status" -eq 0 ]; then
@@ -554,7 +586,7 @@ _create_and_verify_fullchain() {
     # Create chain
     echod "Issuer index: $issuer_index"
     echod "Issuer cert file path: $issuer_cert"
-    traverse_certchain "$index" > "$fullchain_out"
+    _traverse_certchain "$index" > "$fullchain_out"
 
     # Validate chain file
     if [ ! -s "$fullchain_out" ]; then
@@ -644,8 +676,8 @@ create_private_key() {
   echosv "Creating saltfile: $salt_out successful"
 
   # Generate and verify key
-  echod "Calling _create_and_verify_key \"$key_out\" \"$passphrase\" \"$salt_out\" \"$use_rsa\" \"$no_scrypt\" \"$validate\""
-  _create_and_verify_key "$key_out" "$passphrase" "$salt_out" "$use_rsa" "$no_scrypt" "$validate" || {
+  echod "Calling _create_and_verify_key \"$key_out\" \"$passphrase\" \"$salt_out\" \"$use_rsa\" \"$no_scrypt\""
+  _create_and_verify_key "$key_out" "$passphrase" "$salt_out" "$use_rsa" "$no_scrypt" || {
     echoe "Failed to generate private key for $key_out"
     if [ -n "$salt_out" ] && [ ! -f "$salt_out" ]; then
       echoe "Salt file $salt_out does not exist"
@@ -688,7 +720,7 @@ create_certificate_authority() {
   fi
 
   ca_key_out="${2:+$(absolutepathidx "$2" "$index")}"
-  ca_key_out="${2:-$(absolutepathidx "$DC_CAKEY/ca-key.$KEYOUTFORM" "$index")}"
+  ca_key_out="${2:-$(absolutepathidx "$CAKEY_DIR/ca-key.$KEYOUTFORM" "$index")}"
 
   ca_cert_out="${3:+$(absolutepathidx "$3" "$index")}"
   ca_cert_out="${3:-$(absolutepathidx "$DC_CA/ca-cert.$CERTOUTFORM" "$index")}"
@@ -696,7 +728,7 @@ create_certificate_authority() {
   ca_pass="${4:+$([ -s "$4" ] && absolutepath "$4")}"
 
   ca_salt_out="${5:+$(absolutepathidx "$5" "$index")}"
-  ca_salt_out="${5:-$(absolutepathidx "$DC_CAKEY/ca-key.salt" "$index")}"
+  ca_salt_out="${5:-$(absolutepathidx "$CAKEY_DIR/ca-key.salt" "$index")}"
 
   ca_conf_out="${6:+$(absolutepathidx "$7" "$index")}"
   ca_conf_out="${6:-$(absolutepathidx "$DC_CA/ca.conf" "$index")}"
@@ -746,7 +778,6 @@ create_certificate_authority() {
   use_rsa="${25:-false}"
   stores="${26:-system}"
   no_scrypt="${27:-"${NO_SCRYPT:-false}"}"
-  validate="${28:-${VALIDATE_KEYS:-false}}"
 
   echod "Starting create_certificate_authority with parameters:"
   echod "           ca_name: $ca_name"
@@ -774,7 +805,6 @@ create_certificate_authority() {
   echod "           use_rsa: $use_rsa"
   echod "            stores: $stores"
   echod "         no_scrypt: $no_scrypt"
-  echod "          validate: $validate"
 
   # Validate root CA parameters for intermediate CA
   if [ "$intermediate" = "true" ]; then
@@ -786,7 +816,6 @@ create_certificate_authority() {
   else
     ca_storage_type="root"
   fi
-
 
   # Set default file paths
   ca_cert_dir="$(dirname -- "$ca_cert_out")"
@@ -841,8 +870,8 @@ create_certificate_authority() {
   if [ "$intermediate" = "false" ]; then
     echoi "Generating self-signed root CA certificate"
     # Create self signed cert and key
-    echod "Calling _create_and_verify_sscert with: $ca_key_out, $ca_cert_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $days, $no_scrypt, $validate"
-    if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$days" "$no_scrypt" "$validate"; then
+    echod "Calling _create_and_verify_sscert with: $ca_key_out, $ca_cert_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $days, $no_scrypt"
+    if ! _create_and_verify_sscert "$ca_key_out" "$ca_cert_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$days" "$no_scrypt"; then
       rm -f -- "$ca_key_out" "$ca_cert_out" || true
       echoe "Failed to generate self-signed CA certificate"
       return 1
@@ -852,16 +881,16 @@ create_certificate_authority() {
 
     echoi "Generating intermediate CA certificate signed by $root_ca_index"
     # Create and verify key
-    echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $use_rsa, $no_scrypt, $validate"
-    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$use_rsa" "$no_scrypt" "$validate"; then
+    echod "Calling _create_and_verify_key with: $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $use_rsa, $no_scrypt"
+    if ! _create_and_verify_key "$ca_key_out" "$ca_pass" "$ca_salt_out" "$use_rsa" "$no_scrypt"; then
       echoe "Failed to generate CA private key"
       return 1
     fi
     echosv "Creating and verifying KEY successful"
 
     # Create csr and verify
-    echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $use_rsa, $no_scrypt, $validate"
-    if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$use_rsa" "$validate"; then
+    echod "Calling _create_and_verify_csr with: $ca_csr_out, $ca_key_out, ${ca_pass:-"PASSWORD"}, ${ca_salt_out:+"SALT"}, $ca_conf_out, $use_rsa, $no_scrypt"
+    if ! _create_and_verify_csr "$ca_csr_out" "$ca_key_out" "$ca_pass" "$ca_salt_out" "$ca_conf_out" "$use_rsa"; then
       echoe "Failed to generate CSR for intermediate CA"
       return 1
     fi
@@ -1004,7 +1033,7 @@ create_certificate_signing_request() {
   cfg_out="${6:+$(absolutepathidx "$6" "$index")}"
   cfg_out="${6:-$(absolutepathidx "$DC_CERT/cert.conf" "$index")}"
 
-  type="$([ "$client" = "true" ] && echo "client" || echo "server")"
+  type="$([ "$client" = true ] && echo "client" || echo "server")"
 
   domains="$7"
   ips="$8"
@@ -1173,7 +1202,6 @@ sign_certificate_request() {
   echod "      keep_csr: $keep_csr"
   echod "      keep_cfg: $keep_cfg"
   echod " fullchain_out: $fullchain_out"
-  echod "       use_rsa: $use_rsa"
   echod "          user: $DYSTOPIAN_USER"
 
   echoi "Signing CSR: $csr_file"
@@ -1391,7 +1419,6 @@ create_certificate_revocation_list() {
     chmod -- 600 "$crlnumber_file"
   fi
 
-
   # Generate the CRL - following create_certificate_signing_request pattern
   echo "Generating Certificate Revocation List..."
   echo "CA Certificate: $ca_cert_file"
@@ -1467,8 +1494,6 @@ create_certificate_revocation_list() {
     # Count revoked certificates
     revoked_count=$(openssl crl -in "$crl_outfile" -noout -text | grep -c "Serial Number:" || echo "0")
     echo "  Revoked Certificates: $revoked_count"
-
-    echo ""
     echo "Certificate Revocation List generated successfully!"
 
     return 0
@@ -1524,7 +1549,7 @@ _revoke_certificate() {
             -cert "$ca_cert_file" \
             -config "$config_file" \
             -crl_reason "$reason" \
-            -passin "stdin" 2>/dev/null || {
+            -passin stdin 2>/dev/null || {
       echoe "Failed to revoke certificate (with encrypted key)"
       return 1
     }
@@ -1558,7 +1583,6 @@ verify_certificate_or_key() {
       return 1
     fi
   fi
-
 
   if [ -f "$name_cert" ]; then
     cert="$name_cert"
@@ -1594,7 +1618,7 @@ verify_certificate_or_key() {
   ca_subject=$(openssl x509 -in "$cacert" -noout -subject | sed 's/subject=//')
 
   # Check if certificate is expired or will expire soon
-  if [ "$check_expiry" = "true" ]; then
+  if [ "$check_expiry" = true ]; then
     if ! openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1; then
       echow "Certificate '$cert' has expired"
     elif ! openssl x509 -in "$cert" -noout -checkend 2592000 >/dev/null 2>&1; then
@@ -1667,33 +1691,18 @@ verify_certificate_or_key() {
 
 
 ssl_encrypt() (
-  input="$1"
+  input="${1:-stdin}"
   output="${2:-stdout}"
-
-  if [ -z "$input" ]; then
-    echoe "Input is missing."
-    return 1
-  fi
-
-  if [ -z "$3" ]; then
-    exec 3<&0
-    while IFS= read -r line <&3; do
-      passphrase="$line"
-    done
-    # Close FD 3
-    exec 3<&-
-  else
-    passphrase="$3"
-  fi
+  passphrase="$3"
   asymmetric="${4:-false}"
 
   echod "Starting ssl_encrypt with parameters:"
   echod "      input: $input"
   echod "     output: $output"
-  echod " passphrase: $([ -n "$passphrase" ] && [ ! -f "$passphrase" ] && echo "[SET]")"
+  echod " passphrase: $passphrase"
   echod " asymmetric: $asymmetric"
 
-  if [ "$asymmetric" = "false" ]; then
+  if [ "$asymmetric" = false ]; then
     # --- Symmetric Encryption ---
     if [ -z "$passphrase" ]; then
       echoe "--password is required for asymmetric encryption (--asymmetric)."
@@ -1707,7 +1716,7 @@ ssl_encrypt() (
       return 1
     fi
 
-    if [ "$output" = "stdout" ]; then
+    if [ "$output" = stdout ]; then
       echod "Calling derive_key_from_passphrase \"$passphrase\" \"$salt\" | openssl enc aes-256-cbc -e -pbkdf2 -in \"$input\" -pass stdin"
       derive_key_from_passphrase "$passphrase" "$salt" | openssl enc aes-256-cbc -pbkdf2 -in "$input" -pass stdin;
     else
