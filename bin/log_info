@@ -1,0 +1,8 @@
+#!/bin/sh
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+LOG_LIB_FILE="/usr/lib/dystopian/libapplog.sh"
+[ -f "$LOG_LIB_FILE" ] || LOG_LIB_FILE="$SCRIPT_DIR/../../dystopian-libs/lib/libapplog.sh"
+# shellcheck source=../../dystopian-libs/lib/libapplog.sh
+[ -f "$LOG_LIB_FILE" ] && . "$LOG_LIB_FILE"
+_log_message info "$1" "${2:-0}"
