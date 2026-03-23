@@ -3,13 +3,47 @@
 # shellcheck disable=SC2154
 # shellcheck disable=SC2181
 
+_init_gpg_env() {
+  export GNUPGHOME="${1:-$DC_GNUPG}"
+  if [ ! -d "$GNUPGHOME" ]; then
+    mkdir -p -- "$GNUPGHOME/gpg.conf.d" || {
+      echoe "Failed creating gnupg home directory"
+      return 1
+    }
+
+  fi
+  if [ ! -f "$GNUPGHOME/gpg.conf.d/trust.conf" ]; then
+    touch "$GNUPGHOME/gpg.conf.d/trust.conf"
+    echo "trust-model always" | tee "$GNUPGHOME/gpg.conf.d/trust.conf"
+  fi
+  if [ ! -f "$GNUPGHOME/pubring.kbx" ]; then
+    gpg --list-secret-keys >/dev/null 2>&1 || true
+  fi
+  [ -n "$GNUPGHOME" ] && echosv "Successfully setup GNUPGHOME"
+}
+
+
+create_tmp_gpg_home() {
+  tmpdir="$(mktemp -d -- /tmp/XXXXXXXXX)"
+  _init_gpg_env "$tmpdir" || return 1
+  echo "$tmpdir"
+  return 0
+}
+
+
+create_gpg_home() {
+  _init_gpg_env || return 1
+  echo "$GNUPGHOME"
+  return 0
+}
+
 
 _gpg_export_public() {
     fingerprint="$1"
-    key_id=${fingerprint:24}
+    key_id=${fingerprint:16}
     out_path="${2}"
     no_armor="${3:-false}"
-    homedir="${4:-$DC_GNUPG}"
+    homedir="${4:-$GNUPGHOME}"
     with_subs="$5"
 
     echod "Starting _gpg_export_public with parameters:"
@@ -41,86 +75,65 @@ _gpg_export_public() {
 
 
 _gpg_export_secret_primary() {
-    fingerprint="$1"
-    key_id="${fingerprint:+${fingerprint:24}}"
-    out_path="$2"
-    passphrase="$3"
-    no_armor="$4"
-    homedir="${5:-$DC_GNUPG}"
-    with_ssbs="$6"
-    openssl_encrypt="${7:-true}"
-    passphrasedbg=$({ [ "$3" = "gui" ] || [ "$3" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "$3" ]  && [ ! -f "$3" ]; } && echo "[SET]" || echo "$3")
+  fingerprint="$1"
+  key_id="${fingerprint:+${fingerprint:16}}"
+  out_path="$2"
+  passphrase="$3"
+  no_armor="$4"
+  homedir="${5:-$GNUPGHOME}"
+  with_ssbs="$6"
 
-    echod "Starting _gpg_export_secret_primary with parameters:"
-    echod "fingerprint: $fingerprint"
+  echod "Starting _gpg_export_secret_primary with parameters:"
+  echod "fingerprint: $fingerprint"
 
-    echod "   out_path: $out_path"
-    echod " passphrase: $passphrasedbg"
-    echod "   no_armor: $no_armor | $4"
-    echod "    homedir: $homedir"
-    echod "  with_ssbs: $with_ssbs | $6"
-    echod "ssl_encrypt: $openssl_encrypt"
+  echod "   out_path: $out_path"
+  echod " passphrase: $passphrasedbg"
+  echod "   no_armor: $no_armor | $4"
+  echod "    homedir: $homedir"
+  echod "  with_ssbs: $with_ssbs | $6"
 
-    echov "Exporting Secret Primary Key"
+  echov "Exporting Secret Primary Key"
 
-    echod "Building gpg command..."
-    gpg_build_cmd "$homedir" "expsec" "$with_subs" "$no_armor" "$passphrase"
+  echod "Building gpg command..."
+  gpg_build_cmd "$homedir" "expsec" "$with_subs" "$no_armor" "$passphrase"
 
-    # Use GUI to ask for passphrase
-    if [ "$passphrase" = "gui" ] || [ "$passphrase" = "GUI" ]; then
-        printf "\033[1m\033[1;33m>\033[0m\033[1m Enter passphrase:\033[0m "
-        stty -echo
-        read -r openssl_passphrase
-        stty echo
-        printf "\n"
+  # Use GUI to ask for passphrase
+  if [ "$passphrase" = "gui" ] || [ "$passphrase" = "GUI" ]; then
+    echod "Calling $GPG_CMD \"$fingerprint\" > \"$out_path\""
+    $GPG_CMD "$fingerprint" > "$out_path"
 
-        if [ "$openssl_encrypt" = "true" ]; then
-            echod "Calling $GPG_CMD \"$fingerprint\" | encrypt_gpg_key \"$out_path\" \"$passphrasedbg\""
-            encrypt_gpg_key "$out_path" "$openssl_passphrase" "$($GPG_CMD "$fingerprint")"
-            add_to_gpg_key "$(basename -- "${out_path%%.*}")" "salt" "$salt"
-
-        else
-            echod "Calling $GPG_CMD \"$fingerprint\" > \"$out_path\""
-            $GPG_CMD "$fingerprint" > "$out_path"
-        fi
-        unset openssl_passphrase
-
-    # No passphrase at all
-    elif [ -z "$passphrase" ]; then
-        echod "Calling printf \"%s\" \"\" | $GPG_CMD \"$fingerprint\" > \"$out_path\""
-        printf "%s" "" | $GPG_CMD "$fingerprint" > "$out_path"
+  # No passphrase at all
+  elif [ -z "$passphrase" ]; then
+    echod "Calling printf \"%s\" \"\" | $GPG_CMD \"$fingerprint\" > \"$out_path\""
+    printf "%s" "" | $GPG_CMD "$fingerprint" > "$out_path"
+  fi
 
 
+  if [ "$openssl_encrypt" = "true" ] && [ ! -s "$out_path.enc" ]; then
+      echoe "Failed exporting Secret Key to $out_path.enc"
+      return 1
+  elif   [ "$openssl_encrypt" = "false" ] && [ ! -s "$out_path" ]; then
+      echoe "Failed exporting Secret Key to $out_path"
+      return 1
+  fi
 
-    if [ "$openssl_encrypt" = "true" ] && [ ! -s "$out_path.enc" ]; then
-        echoe "Failed exporting Secret Key to $out_path.enc"
-        return 1
-    elif   [ "$openssl_encrypt" = "false" ] && [ ! -s "$out_path" ]; then
-        echoe "Failed exporting Secret Key to $out_path"
-        return 1
-    fi
+  if [ "$openssl_encrypt" != "true" ]; then
+      set_permissions_and_owner "$out_path" 440
+  fi
 
-    if [ "$openssl_encrypt" != "true" ]; then
-        set_permissions_and_owner "$out_path" 440
-    fi
-
-    return 0
+  return 0
 }
 
 
 # Exports dummy primary and either all or one ssb
 _gpg_export_secret_ssb_with_dummy() {
     fingerprint="${1}"
-    key_id="${fingerprint:24}"
+    key_id="${fingerprint:16}"
     out_path="$2"
     no_armor="$3"
-    homedir="${4:-$DC_GNUPG}"
+    homedir="${4:-$GNUPGHOME}"
     with_subkeys="$5"
-    openssl_encrypt="${6:-true}"
     passphrase="$7"
-    passphrasedbg=$({ [ "$7" = "gui" ] || [ "$7" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "$7" ]  && [ ! -f "$7" ]; } && echo "[SET]" || echo "$7")
 
     if [ "$with_subkeys" = "false" ]; then
         fingerprint="${fingerprint}!"
@@ -134,7 +147,6 @@ _gpg_export_secret_ssb_with_dummy() {
     echod "      no_armor: $no_armor"
     echod "       homedir: $homedir"
     echod "    passphrase: $passphrasedbg"
-    echod "   ssl_encrypt: $openssl_encrypt"
     echod "  with_subkeys: $with_subkeys"
 
     if [ -z "$passphrase" ]; then
@@ -202,8 +214,6 @@ _gpg_create_primary_key() {
     homedir="$3"
     expiry_date="$4"
     usage="${5:-cert,sign}"
-    passphrasedbg=$({ [ "$2" = "gui" ] || [ "$2" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "$2" ]  && [ ! -f "$2" ]; } && echo "[SET]" || echo "$2")
 
     echod "Starting _gpg_create_primary_key with parameters:"
     echod "           uid: $uid"
@@ -251,8 +261,6 @@ _gpg_add_subkey() {
     usage="$5"
     expiry_date="$6"
     uid="$7"
-    passphrasedbg=$({ [ "$2" = "gui" ] || [ "$2" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "$2" ]  && [ ! -f "$2" ]; } && echo "[SET]" || echo "$2")
 
     echod "Starting _gpg_add_subkey with parameters:"
     echod " primary_key_id: $primary_key_id"
@@ -280,15 +288,15 @@ _gpg_add_subkey() {
 
     # Read pass from file
     elif [ -s "$passphrase" ]; then
-        if [ -n "$uid" ] && [ "$uid" != " " ]; then
-            echod "Add UID: gpg --batch --homedir \"$homedir\" --passphrase-file \"$passphrase\" --quick-add-uid \"$fingerprint\" \"$uid\""
-            gpg --batch --homedir "$homedir" --pinentry-mode loopback --passphrase-file "$passphrase" --quick-add-uid "$fingerprint" "$uid" 2>&1
+      if [ -n "$uid" ] && [ "$uid" != " " ]; then
+        echod "Add UID: gpg --batch --homedir \"$homedir\" --passphrase-file \"$passphrase\" --quick-add-uid \"$fingerprint\" \"$uid\""
+        gpg --batch --homedir "$homedir" --pinentry-mode loopback --passphrase-file "$passphrase" --quick-add-uid "$fingerprint" "$uid" 2>&1
 
-            echod "Trust UID: printf \"trust\n5\ny\nsave\" | gpg --homedir \"$homedir\" --command-fd 0 --edit-key \"$primary_key_id\" 2>&1"
-            printf "trust\n5\ny\nsave\n" | gpg --batch --homedir "$homedir" --command-fd 0 --edit-key "$primary_key_id" 2>/dev/null
-        fi
-        echod "Add $usage Key: $GPG_CMD \"$primary_key_id\" \"$curve\" \"$usage\" \"$expiry_date\""
-        $GPG_CMD "$primary_key_id" "$curve" "$usage" "$expiry_date" 2>&1
+        echod "Trust UID: printf \"trust\n5\ny\nsave\" | gpg --homedir \"$homedir\" --command-fd 0 --edit-key \"$primary_key_id\" 2>&1"
+        printf "trust\n5\ny\nsave\n" | gpg --batch --homedir "$homedir" --command-fd 0 --edit-key "$primary_key_id" 2>/dev/null
+      fi
+      echod "Add $usage Key: $GPG_CMD \"$primary_key_id\" \"$curve\" \"$usage\" \"$expiry_date\""
+      $GPG_CMD "$primary_key_id" "$curve" "$usage" "$expiry_date" 2>&1
     fi
 
     # shellcheck disable=SC2181
@@ -314,7 +322,7 @@ gpg_create_keypair() {
     name_email="${3:+<$3>}"
     name_comment="${4:+ ($4)}"
     expiry_date="${5:-2y}"
-    homedir="${6:-$DC_GNUPG}"
+    homedir="${6:-$GNUPGHOME}"
     sign="${7:-false}"
     auth="${8:-false}"
     encrypt="${9:-false}"
@@ -430,7 +438,7 @@ gpg_create_keypair() {
     _gpg_create_primary_key "$uid" "$passphrase" "$homedir" "$expiry_date" "$usage"
     echosv "Creating primary key successful"
 
-    key_id="${fingerprint:24}"
+    key_id="${fingerprint:16}"
 
     # Add key to database
     echod "Adding GPG primary key to database:"
@@ -452,7 +460,7 @@ gpg_create_keypair() {
             return 1
         fi
         echosv "Adding subkey for signing successful."
-        sub_key_id="${sub_fingerprint:24}"
+        sub_key_id="${sub_fingerprint:16}"
         add_gpg_sub "$index" "$sub_key_id"
         add_to_gpg_key "$index" "$sub_key_id" "usage" "sign"
         add_to_gpg_key "$index" "$sub_key_id" "fingerprint" "$sub_fingerprint"
@@ -470,7 +478,7 @@ gpg_create_keypair() {
             return 1
         fi
         echosv "Adding subkey for encryption successful."
-        sub_key_id="${sub_fingerprint:24}"
+        sub_key_id="${sub_fingerprint:16}"
         add_gpg_sub "$index" "$sub_key_id"
         add_to_gpg_key "$index" "$sub_key_id" "usage" "encrypt"
         add_to_gpg_key "$index" "$sub_key_id" "fingerprint" "$sub_fingerprint"
@@ -488,7 +496,7 @@ gpg_create_keypair() {
             return 1
         fi
         echosv "Adding subkey for authentication successful."
-        sub_key_id="${sub_fingerprint:24}"
+        sub_key_id="${sub_fingerprint:16}"
         add_gpg_sub "$index" "$sub_key_id"
         add_to_gpg_key "$index" "$sub_key_id" "usage" "auth"
         add_to_gpg_key "$index" "$sub_key_id" "fingerprint" "$sub_fingerprint"
@@ -503,15 +511,14 @@ gpg_create_keypair() {
 
 
 gpg_create_subkey() {
-    homedir="${1:-$DC_GNUPG}"
+    homedir="${1:-$GNUPGHOME}"
     name_real="$2"
     name_email="${3:+<$3>}"
     name_comment="${4:+ ($4)}"
     uid="${5:-}"
     fingerprint="$6"
-    key_id="${7:-${fingerprint:+${fingerprint:24}}}"
+    key_id="${7:-${fingerprint:+${fingerprint:16}}}"
     passphrase="$8"
-    encrypt="${9:-false}"
     sign="${10:-false}"
     auth="${11:-false}"
     index="${12:-}"
@@ -534,7 +541,6 @@ gpg_create_subkey() {
     echod "   fingerprint: $fingerprint"
     echod "        key_id: $key_id"
     echod "    passphrase: $passphrasedbg"
-    echod "       encrypt: $encrypt"
     echod "          sign: $sign"
     echod "          auth: $auth"
     echod "         index: $index"
@@ -565,16 +571,17 @@ gpg_create_subkey() {
     fi
 
     usage=""
-    if [ "$sign" = "true" ]; then
+
+    if [ "$sign" = true ]; then
         usage="sign"
         curve="ed25519"
     fi
-    if [ "$auth" = "true" ]; then
+    if [ "$auth" = true ]; then
         usage="$usage${usage:+,auth}"
         usage="${usage:-auth}"
         curve="ed25519"
     fi
-    if [ "$encrypt" = "true" ]; then
+    if [ "$encrypt" = true ]; then
         usage="encrypt"
         curve="cv25519"
     fi
@@ -597,7 +604,7 @@ gpg_create_subkey() {
     fi
     echosv "Creating subkey successful"
 
-    sub_key_id="${sub_fingerprint:24}"
+    sub_key_id="${sub_fingerprint:16}"
     add_gpg_sub "$index" "$sub_key_id"
     add_to_gpg_key "$index" "$sub_key_id" "usage" "$usage"
     add_to_gpg_key "$index" "$sub_key_id" "fingerprint" "$sub_fingerprint"
@@ -617,203 +624,251 @@ gpg_create_subkey() {
 
 
 gpg_export_keypair() {
-    fingerprint="$1"
-    name_real="${2:-}"
-    key_id="${3:-${fingerprint:24}}"
-    index="${4:-${name_real:+$(echo "$name_real" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}}"
+  fingerprint="$1"
+  name_real="${2:-}"
+  key_id="${3:-${fingerprint:16}}"
+  index="${4:-${name_real:+$(echo "$name_real" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}}"
 
-    no_armor="${5:-false}"
-    homedir="${6:-$DC_GNUPG}"
+  no_armor="${5:-false}"
+  homedir="${6:-$GNUPGHOME}"
 
-    out_dir="${7:+$(dirname "$6")}"
-    out_dir="${7:-$(dirname ".")}"
+  out_dir="${7:+$(dirname "$6")}"
+  out_dir="${7:-$(dirname ".")}"
 
-    public_key_out="$8"
-    private_key_out="$9"
+  public_key_out="$8"
+  private_key_out="$9"
 
-    with_subkeys="${10:-false}"
-    passphrase=${11}
-    openssl_encrypt="${12:-true}"
-    passphrasedbg=$({ [ "${11}" = "gui" ] || [ "${11}" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "${11}" ]  && [ ! -f "${11}" ]; } && echo "[SET]" || echo "${11}")
+  with_subkeys="${10:-false}"
+  passphrase=${11}
+  passphrasedbg=$({ [ "${11}" = "gui" ] || [ "${11}" = "GUI" ]; } && echo "[GUI]")
+  passphrasedbg=$({ [ -n "${11}" ]  && [ ! -f "${11}" ]; } && echo "[SET]" || echo "${11}")
 
+  # Check if gpg key exists
+  if ! gpg_index_exists "$index"; then
+      echoe "Key with index: $index doesn't exist"
+      return 1
+  fi
 
-    # Check if gpg key exists
-    if ! gpg_index_exists "$index"; then
-        echoe "Key with index: $index doesn't exist"
+  # Fetch additional params if not set
+  if { [ -z "$fingerprint" ] || [ -z "$key_id" ]; } && [ -n "$index" ]; then
+    fingerprint=$(get_gpg_value "$index" "fingerprint")
+  elif { [ -z "$fingerprint" ] || [ -z "$key_id" ]; } && [ -n "$name_real" ]; then
+    index=$(echo "$name_real" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")
+    fingerprint=$(get_gpg_value "$index" "fingerprint")
+  fi
+
+  index=${index:-$(get_gpg_value_by_key_match "index" "fingerprint" "$fingerprint")}
+  key_id=${key_id:-${fingerprint:16}}
+  uid=${uid:-$(get_gpg_value "$index" "uid")}
+  name_real=${name_real:-$(get_name_real_from_uid "$uid")}
+
+  echod "Starting gpg_export_keypair with parameters:"
+  echod "      fingerprint: $fingerprint"
+  echod "        name_real: $name_real"
+  echod "           key_id: $key_id"
+  echod "            index: $index"
+  echod "         no_armor: $no_armor"
+  echod "          homedir: $homedir"
+  echod "          out_dir: $out_dir"
+  echod "   public_key_out: $public_key_out"
+  echod "  private_key_out: $private_key_out"
+  echod "     with_subkeys: $with_subkeys"
+  echod "       passphrase: $passphrasedbg"
+
+  # Validate params
+  if [ -z "$fingerprint" ] || [ -z "$key_id" ] || [ -z "$index" ] || [ -z "$name_real" ]; then
+    echoe "fingerprint, name_real, index and key_id must be set"
+    return 1
+  fi
+
+  # Set default values for Public & Private Keys
+  if [ -z "$public_key_out" ]; then
+    ext=$([ "$no_armor" = "false" ] && echo "asc" || echo "gpg")
+    public_key_out="$out_dir/$index.public.$ext"
+  elif [ -n "$public_key_out" ]; then
+    public_key_dir=$(dirname "$public_key_out")
+    public_key_out=$(absolutepath "$public_key_out")
+    [ "$public_key_dir" != "$out_dir" ] && out_dir=""
+  fi
+
+  if [ -z "$private_key_out" ]; then
+    ext=$([ "$no_armor" = "false" ] && echo "asc" || echo "key")
+    private_key_out="$out_dir/$index.secret.$ext"
+  elif [ -n "$private_key_out" ]; then
+    private_key_dir=$(dirname "$private_key_out")
+    private_key_out=$(absolutepath "$private_key_out")
+    [ "$private_key_dir" != "$out_dir" ] && out_dir=""
+  fi
+
+  # Create output directory if not exists
+  if [ "$out_dir" != "" ] && [ ! -d "$out_dir" ]; then
+    mkdir -p "$out_dir" || {
+      echoe "Error creating output directory $out_dir"
+      return 1
+    }
+  elif [ "$out_dir" == "" ]; then
+    if [ ! -d "$public_key_dir" ]; then
+      mkdir -p "$public_key_dir" || {
+        echoe "Error creating output directory $public_key_dir"
         return 1
+     }
     fi
 
-    # Fetch additional params if not set
-    if { [ -z "$fingerprint" ] || [ -z "$key_id" ]; } && [ -n "$index" ]; then
-        fingerprint=$(get_gpg_value "$index" "fingerprint")
-    elif { [ -z "$fingerprint" ] || [ -z "$key_id" ]; } && [ -n "$name_real" ]; then
-        index=$(echo "$name_real" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")
-        fingerprint=$(get_gpg_value "$index" "fingerprint")
-    fi
-
-    index=${index:-$(get_gpg_value_by_key_match "index" "fingerprint" "$fingerprint")}
-    key_id=${key_id:-${fingerprint:24}}
-    uid=${uid:-$(get_gpg_value "$index" "uid")}
-    name_real=${name_real:-$(get_name_real_from_uid "$uid")}
-
-    echod "Starting gpg_export_keypair with parameters:"
-    echod "      fingerprint: $fingerprint"
-    echod "        name_real: $name_real"
-    echod "           key_id: $key_id"
-    echod "            index: $index"
-    echod "         no_armor: $no_armor"
-    echod "          homedir: $homedir"
-    echod "          out_dir: $out_dir"
-    echod "   public_key_out: $public_key_out"
-    echod "  private_key_out: $private_key_out"
-    echod "     with_subkeys: $with_subkeys"
-    echod "       passphrase: $passphrasedbg"
-    echod "  openssl_encrypt: $openssl_encrypt"
-
-    # Validate params
-    if [ -z "$fingerprint" ] || [ -z "$key_id" ] || [ -z "$index" ] || [ -z "$name_real" ]; then
-        echoe "fingerprint, name_real, index and key_id must be set"
+    if [ ! -d "$private_key_dir" ]; then
+      mkdir -p "$private_key_dir" || {
+        echoe "Error creating output directory $private_key_dir"
         return 1
+      }
     fi
+  fi
 
-    # Set default values for Public & Private Keys
-    if [ -z "$public_key_out" ]; then
-        ext=$([ "$no_armor" = "false" ] && echo "asc" || echo "gpg")
-        public_key_out="$out_dir/$index.public.$ext"
-    elif [ -n "$public_key_out" ]; then
-        public_key_dir=$(dirname "$public_key_out")
-        public_key_out=$(absolutepath "$public_key_out")
-        [ "$public_key_dir" != "$out_dir" ] && out_dir=""
-    fi
-
-    if [ -z "$private_key_out" ]; then
-        ext=$([ "$no_armor" = "false" ] && echo "asc" || echo "key")
-        private_key_out="$out_dir/$index.secret.$ext"
-    elif [ -n "$private_key_out" ]; then
-        private_key_dir=$(dirname "$private_key_out")
-        private_key_out=$(absolutepath "$private_key_out")
-        [ "$private_key_dir" != "$out_dir" ] && out_dir=""
-    fi
-
-    # Create output directory if not exists
-    if [ "$out_dir" != "" ] && [ ! -d "$out_dir" ]; then
-        mkdir -p "$out_dir" || {
-            echoe "Error creating output directory $out_dir"
-            return 1
-        }
-    elif [ "$out_dir" == "" ]; then
-        if [ ! -d "$public_key_dir" ]; then
-            mkdir -p "$public_key_dir" || {
-                echoe "Error creating output directory $public_key_dir"
-                return 1
-            }
-        fi
-
-        if [ ! -d "$private_key_dir" ]; then
-            mkdir -p "$private_key_dir" || {
-                echoe "Error creating output directory $private_key_dir"
-                return 1
-            }
-        fi
-    fi
-
-    # Find out if key_id is subkey
-    subkey="false"
-    for index in jq -r '.gpg.keys | to_entries[] | .key // empty' -- "$DC_DB"; do
-        # shellcheck disable=SC2016
-        for sidx in jq -r --arg idx "$index" '.gpg.keys[$idx].subkeys | to_entries[] | .key // empty' -- "$DC_DB"; do
-            if [ "$sidx" = "${fingerprint:24}" ]; then
-                subkey="true"
-                echod "$fingerprint is subkey"
-            fi
-        done
+  # Find out if key_id is subkey
+  subkey=false
+  for index in jq -r '.gpg.keys | to_entries[] | .key // empty' -- "$DC_DB"; do
+    # shellcheck disable=SC2016
+    for sidx in jq -r --arg idx "$index" '.gpg.keys[$idx].subkeys | to_entries[] | .key // empty' -- "$DC_DB"; do
+      if [ "$sidx" = "${fingerprint:16}" ]; then
+        subkey=true
+        echod "$fingerprint is subkey"
+      fi
     done
+  done
 
-    echod "Final public_key_out: $public_key_out"
-    echod "Final private_key_out: $private_key_out"
-    [ -n "$out_dir" ] && echod "Final out_dir: $out_dir"
+  echod "Final public_key_out: $public_key_out"
+  echod "Final private_key_out: $private_key_out"
+  [ -n "$out_dir" ] && echod "Final out_dir: $out_dir"
 
-    # Export public
-    echod "Calling _gpg_export_public \"$fingerprint\" \"$public_key_out\" \"$no_armor\" \"$homedir\" \"$with_subkeys\""
-    if ! _gpg_export_public "$fingerprint" "$public_key_out" "$no_armor" "$homedir" "$with_subkeys"; then
-        echoe "Failed calling _gpg_export_public"
-        return 1
+  # Export public
+  echod "Calling _gpg_export_public \"$fingerprint\" \"$public_key_out\" \"$no_armor\" \"$homedir\" \"$with_subkeys\""
+  if ! _gpg_export_public "$fingerprint" "$public_key_out" "$no_armor" "$homedir" "$with_subkeys"; then
+    echoe "Failed calling _gpg_export_public"
+    return 1
+  fi
+
+  # Export Primary Secret Key with one or all subkeys
+  if [ "$subkey" = false ]; then
+    echod "Calling _gpg_export_secret_primary \"$fingerprint\" \"$private_key_out\" \"$passphrasedbg\" \"$no_armor\" \"$homedir\" \"$with_subkeys\" \"$openssl_encrypt\""
+    if _gpg_export_secret_primary "$fingerprint" "$private_key_out" "$passphrase" "$no_armor" "$homedir" "$with_subkeys" "$openssl_encrypt"; then
+      echosv "Exported secret GPG key successfully."
     fi
 
-    # Export Primary Secret Key with one or all subkeys
-    if [ "$subkey" = "false" ]; then
-        echod "Calling _gpg_export_secret_primary \"$fingerprint\" \"$private_key_out\" \"$passphrasedbg\" \"$no_armor\" \"$homedir\" \"$with_subkeys\" \"$openssl_encrypt\""
-        if _gpg_export_secret_primary "$fingerprint" "$private_key_out" "$passphrase" "$no_armor" "$homedir" "$with_subkeys" "$openssl_encrypt"; then
-            echosv "Exported secret GPG key successfully."
-        fi
-
-    # Export Dummy Primary Key with one or all subkeys
-    elif [ "$subkey" = "true" ]; then
-        echod "_gpg_export_secret_ssb_with_dummy \"$fingerprint\" \"$private_key_out\" \"$no_armor\" \"$homedir\" \"$with_subkeys\" \"$openssl_encrypt\" \"$passphrasedbg\""
-        if _gpg_export_secret_ssb_with_dummy "$fingerprint" "$private_key_out" "$no_armor" "$homedir" "$with_subkeys" "$openssl_encrypt" "$passphrase"; then
-            echosv "Exported secret GPG subkey successfully."
-        fi
+  # Export Dummy Primary Key with one or all subkeys
+  elif [ "$subkey" = true ]; then
+    echod "_gpg_export_secret_ssb_with_dummy \"$fingerprint\" \"$private_key_out\" \"$no_armor\" \"$homedir\" \"$with_subkeys\" \"$openssl_encrypt\" \"$passphrasedbg\""
+    if _gpg_export_secret_ssb_with_dummy "$fingerprint" "$private_key_out" "$no_armor" "$homedir" "$with_subkeys" "$openssl_encrypt" "$passphrase"; then
+      echosv "Exported secret GPG subkey successfully."
     fi
+  fi
 
-    if [ "$?" -ne 0 ]; then
-        echoe "Failed exporting secret key"
-        return 1
-    fi
+  if [ "$?" -ne 0 ]; then
+    echoe "Failed exporting secret key"
+    return 1
+  fi
 
-    echos "Exporting Keypair successful."
+  echos "Exporting Keypair successful."
+}
+
+_parse_gpg_file() {
+  tmphome=$(create_tmp_gpg_home)
+  _import_public "$1"
+  fullview="gpg --homedir $tmphome --list-keys --with-subkey-fingerprints"
+  printf "%s\n" "$fullview" | \
+  while read -r line; do
+    case "$line" in
+      ^pub*)
+        pubcap=$(printf "%s\n" "$line" | grep -E "^pub" | awk -F'[][]' '{print $2}')
+        pubfpr=$(printf "%s\n" "$line" | grep -A1 -E "^pub" | tail -1 | tr -d ' ')
+        pubalgo=$(printf "%s\n" "$line" | grep -E "^pub" | awk -F' ' '{print $2}')
+        type="primary"
+        printf "%s\n" "pub $pubalgo $pubfpr $pubcap"
+        ;;
+      ^sub*)
+        subcap=$(printf "%s\n" "$line" | grep -E "^sub" | awk -F'[][]' '{print $2}')
+        subfpr=$(printf "%s\n" "$line" | grep -A1 -E "^sub" | tail -1 | tr -d ' ')
+        subalgo=$(printf "%s\n" "$line" | grep -E "^sub" | awk -F' ' '{print $2}')
+        type="sub"
+        printf "%s\n" "sub $subalgo $subfpr $subcap"
+        ;;
+      ^sec*)
+        seccap=$(printf "%s\n" "$line" | grep -E "^sec" | awk -F'[][]' '{print $2}')
+        secfpr=$(printf "%s\n" "$line" | grep -A1 -E "^sec" | tail -1 | tr -d ' ')
+        secalgo=$(printf "%s\n" "$line" | grep -E "^sec" | awk -F' ' '{print $2}')
+        printf "%s\n" "sec $secalgo $secfpr $seccap"
+        ;;
+      ^ssb*)
+        ssbcap=$(printf "%s\n" "$line" | grep -E "^ssb" | awk -F'[][]' '{print $2}')
+        ssbfpr=$(printf "%s\n" "$line" | grep -A1 -E "^ssb" | tail -1 | tr -d ' ')
+        ssbalgo=$(printf "%s\n" "$line" | grep -E "^ssb" | awk -F' ' '{print $2}')
+        printf "%s\n" "ssb $ssbalgo $ssbfpr $ssbcap"
+        ;;
+    esac
+  done
+
+}
+
+_import_public() {
+  echoi "Importing public GPG key..."
+  gpg --batch --import "$1" >/dev/null 2>&1 || {
+    echoe "Error importing public key"
+    return 1
+  }
+  fp=$(gpg --batch --list-keys | grep -E -A1 ^pub | tail -1 | tr -d ' ')
+  echo "$fp:6:" | gpg --batch --import-ownertrust >/dev/null 2>&1 || {
+    echow "Error importing ownertrust"
+    return 0
+  }
+
+  echosv "Successfully imported GPG public key"
+}
+
+_import_private() {
+  echoi "Importing private GPG key..."
+
+  # with passfile
+  if [ -s "$2" ]; then
+    gpg --batch --pinentry-mode loopback --passphrase-file "$2" --import "$1"
+  # with GUI
+  elif [ ! -f "$2" ] && [ -z "$2" ]; then
+    gpg --batch --import "$1"
+  fi
+
+  echosv "Successfully imported GPG private key"
 }
 
 gpg_import_keys() {
-    import_path="${1:+$(absolutepath "$1")}"
-    import_path="${1:-$(dirname ".")}"
-    passphrase="$2"
-    scan_depth="${3:-1}"
-    index="${4:+$(echo "$4" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
-    remove_keys="${5:-false}"
-    homedir="${6:-$DC_GNUPG}"
-    passphrasedbg=$({ [ "$2" = "gui" ] || [ "$2" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "$2" ]  && [ ! -f "$2" ]; } && echo "[SET]" || echo "$2")
+  import_path="$1"
+  passphrase="$2"
+  #index="${4:+$(echo "$4" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}"
 
-    echod "Starting gpg_import_keys with parameters:"
-    echod "             index: $index"
-    echod "       import_path: $import_path"
-    echod "        passphrase: $passphrasedbg"
-    echod "        scan_depth: $scan_depth"
-    echod "       remove_keys: $remove_keys"
-    echod "           homedir: $homedir"
+  if [ -f "$import_path" ]; then
+    import_path="$(absolutepath "$1")"
+  elif [ -z "$import_path" ]; then
+    import_path="$(dirname ".")"
+  fi
 
-    echoi "Importing keys from path: $import_path"
+  if [ "$DYSTOPIAN_USER" = "root" ] ; then
+    echoe "Must be executed with --user param or with sudo"
+    return 1
+  fi
 
-    imports=0
-    files=$(find "$import_path" -maxdepth "$scan_depth" -name "*.asc" -o -name "*.gpg" -o -name "*.asc.enc" -o -name "*.gpg.enc")
-    for file in $files; do
-        file=$(absolutepath "$file")
-        mime=$(file "$file" | awk -F': ' '{print $2}')
-        echov "Found file: $file"
-        if [ "${file##*.}" = "enc" ] || [ "$mime" = "openssl enc'd data with salted password" ]; then
-            gpg_build_cmd "$homedir" "imp" "" "" "$passphrase"
-            echod "Calling decrypt_gpg_key \"$(basename "$file")\" \"$index\" \"$passphrasedbg\" | $GPG_CMD"
-            if ! decrypt_gpg_key "$(basename "$file")" "$index" "$passphrase" | $GPG_CMD; then
-                echoe "Faile calling decrypt_gpg_key"
-                return 1
-            fi
-            imports=$(( imports + 1 ))
-            echosv "Imported Secret Key successfully"
-        elif { [ "${file##*.}" = "asc" ] || [ "${file##*.}" = "gpg" ]; } && ! { file "$file" | grep -qE "openssl enc'd data with salted password"; };  then
-            gpg_build_cmd "$homedir" "imp"
-            echod "Calling $GPG_CMD \"$file\""
-            if ! $GPG_CMD "$file"; then
-                echoe "Faile calling decrypt_gpg_key"
-                return 1
-            fi
-            imports=$(( imports + 1 ))
-            echosv "Imported Public Key successfully"
-        fi
+  echod "Starting gpg_import_keys with parameters:"
+  #echod "             index: $index"
+  echod "       import_path: $import_path"
+  echod "        passphrase: $passphrasedbg"
+  echod "           homedir: $GNUPGHOME"
+  echoi "Importing keys from: $import_path"
 
-    done
-
-    echos "Importing GPG Keys successful. Amount: $imports"
+  imports=0
+  files=$(find "$import_path" -name "*.asc" -o -name "*.gpg" -o -name "*.asc.enc" -o -name "*.gpg.enc")
+  for file in $files; do
+    file=$(absolutepath "$file")
+    mime=$(file "$file" | awk -F': ' '{print $2}')
+    case "$mime" in
+      PGP\ public*) imports=$(("$imports" + 1)); _import_public "$file";;
+      PGP\ private*) imports=$(("$imports" + 1)); _import_private "$file" "$passphrase";;
+    esac
+  done
+  echos "Importing GPG Keys successful. Amount: $imports"
 }
 
 
@@ -821,13 +876,12 @@ sign_pkgbuild() {
     fingerprint="$1"
     name_real="$2"
     index="${3:-${2:+$(echo "$name_real" | sed -e 's/\-/\_/g' -e 's/\ /\_/g' | tr "[:upper:]" "[:lower:]")}}"
-    key_id="${4:-${fingerprint:24}}"
+    key_id="${4:-${fingerprint:16}}"
     path="$5"
     passphrase="$6"
-    homedir="${7:-$DC_GNUPG}"
+    homedir="${7:-$GNUPGHOME}"
     makepkg="${8:-false}"
-    passphrasedbg=$({ [ "$6" = "gui" ] || [ "$6" = "GUI" ]; } && echo "[GUI]")
-    passphrasedbg=$({ [ -n "$6" ]  && [ ! -f "$6" ]; } && echo "[SET]" || echo "$6")
+
 
     echod "Starting sign_pkgbuild with parameters:"
     echod " fingerprint: $fingerprint"

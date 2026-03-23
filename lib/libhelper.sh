@@ -6,88 +6,6 @@
 umask 077
 
 
-echoi() {
-  if [ "$QUIET" -ne 1 ]; then
-    if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
-    printf "\033[1;34m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
-  fi
-}
-
-echov() {
-  if [ "$VERBOSE" -eq 1 ]; then
-    if [ "$DEBUG" -eq 1 ]; then istr="    INFO:"; else istr=""; fi
-    printf "\033[1;36m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
-  fi
-}
-
-echod() {
-  [ "$DEBUG" -eq 1 ] && printf "\033[1;37m>   DEBUG:\033[0m %s\n" "$1"
-}
-
-echow() {
-  wstr=""
-  if [ "$QUIET" -ne 1 ]; then
-    [ "$DEBUG" -eq 1 ] && wstr=" WARNING:"
-    printf "\033[1;33m>%s\033[1;37m %s\033[0m" "$wstr" "$1" >&2 2>/dev/null
-    [ -z "$2" ] && [ "$2" != "nonl" ] && printf "\n" >&2
-    [ "$2" = '\r' ] && printf "\r" >&2
-  fi
-}
-
-echowv() {
-  [ "$VERBOSE" -ne 1 ] && return 0
-  echow "$1"
-}
-
-echoe() {
-  printf "\033[1;31m>   ERROR:\033[1;37m %s\033[0m\n" "$1" >&2
-}
-
-echos() {
-  istr=""
-  if [ "$QUIET" -ne 1 ]; then
-    [ "$DEBUG" -eq 1 ] && istr="  INFO:"
-    printf "\033[1;32m>>>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
-  fi
-}
-
-echosv() {
-  istr=""
-  if [ "$VERBOSE" -eq 1 ]; then
-    [ "$DEBUG" -eq 1 ] && istr="    INFO:"
-    printf "\033[1;32m>%s\033[1;37m %s\033[0m\n" "$istr" "$1"
-  fi
-}
-
-
-askyesno() {
-  default="$2"
-  case "$default" in
-  y|Y|yes|Yes|YES)
-    question=$(printf "%s [Y/n]: " "$1")
-    default_return=0
-    ;;
-  n|N|no|No|NO)
-    question=$(printf "%s [y/N]: " "$1")
-    default_return=1
-    ;;
-  *)
-    question=$(printf "%s [y/N]: " "$1")
-    default_return=1
-    ;;
-  esac
-  while true; do
-    echow "$question" 1
-    read -r yesno < /dev/tty
-    case "$yesno" in
-      y|Y|j|J|yes|Yes|YES) return 0;;
-      n|N|no|NO|No) return 1;;
-      "") return $default_return;;
-      * ) ;;
-    esac
-  done
-}
-
 askpassword() {
   PASSPHRASE=
   PASSPHRASE=$(
@@ -95,7 +13,7 @@ askpassword() {
     tty_settings=$(stty -g)
     trap 'stty "$tty_settings"' EXIT INT TERM
     stty -echo
-    echow "Enter passphrase: " >/dev/tty
+    log_warn "Enter passphrase: " >/dev/tty
     IFS= read -r password
     echo > /dev/tty
     printf '%s\n' "$password"
@@ -134,62 +52,62 @@ reset_dystopian_crypto() {
   if askyesno "Are you sure you want to reset the config and keys?" "n";then
     if askyesno "Do you want to backup the directory first?" "y"; then
       cp -rf "$DC_CFGDIR" "${DC_CFGDIR}.bkp" 2>/dev/null || {
-          echoe "Problem backing up keys and config"
+          log_error "Problem backing up keys and config"
           exit 1
       }
-      echos "Backup successful @ /etc/dystopian-crypto.bkp"
+      log_success "Backup successful @ /etc/dystopian-crypto.bkp"
     fi
-    { [ "$ssl" = true ] && [ "$gpg" = true ]; } && echow "--ssl or --gpg flag not set."
+    { [ "$ssl" = true ] && [ "$gpg" = true ]; } && log_warn "--ssl or --gpg flag not set."
     if [ -n "$ssl" ] && [ "$ssl" = "true" ]; then
       if askyesno "Last WARNING! Answering yes will delete everything SSL related in $DC_CFGDIR & $DC_DB" "N"; then
         rm -rf -- "${DC_CA}" "${DC_CERT}" "${DC_CRL}" 2>/dev/null || {
-            echoe "Problem resetting dystopian-crypto ssl"
+            log_error "Problem resetting dystopian-crypto ssl"
             exit 1
         }
-        mkdir -p -- "$DC_CAKEY" "$DC_KEY" "$DC_CRL" || {
-            echoe "Problem creating ssl directories"
+        mkdir -p -- "$CAKEY_DIR" "$DC_KEY" "$DC_CRL" || {
+            log_error "Problem creating ssl directories"
             exit 1
         }
         set_permissions_and_owner "$DC_CFGDIR" 750
         set_permissions_and_owner "$DC_KEY" 700
-        set_permissions_and_owner "$DC_CAKEY" 700
+        set_permissions_and_owner "$CAKEY_DIR" 700
         for i in $(get_all_indices); do
           manage_truststore "$i" "uninstall"
         done
         reset_ssl_index
-        echos "Reset of dystopian-crypto SSL successful"
+        log_success "Reset of dystopian-crypto SSL successful"
       else
-        echoi "Exiting dystopian-crypto. No harm was done."
+        log_note "Exiting dystopian-crypto. No harm was done."
         exit 0
       fi
     fi
     if [ -n "$gpg" ] && [ "$gpg" = "true" ]; then
       if askyesno "Last WARNING! Answering yes will delete everything GPG related in $DC_GNUPG & $DC_DB" "N"; then
         rm -rf -- "${DC_GNUPG}" 2>/dev/null || {
-          echoe "Problem resetting dystopian-crypto GPG"
+          log_error "Problem resetting dystopian-crypto GPG"
           exit 1
         }
         mkdir -p -- "$DC_GNUPG" || {
-          echoe "Failed creating new GPG home directory"
+          log_error "Failed creating new GPG home directory"
           exit 1
         }
         set_permissions_and_owner "$DC_GNUPG" 700
         reset_gpg_index
-        echos "Reset of dystopian-crypto GPG successful"
+        log_success "Reset of dystopian-crypto GPG successful"
       else
-        echoi "Exiting dystopian-crypto. No harm was done."
+        log_note "Exiting dystopian-crypto. No harm was done."
         exit 0
       fi
     fi
 
   else
-    echoi "Exiting dystopian-crypto. No harm was done."
+    log_note "Exiting dystopian-crypto. No harm was done."
     exit 0
   fi
 }
 
 
-traverse_certchain() {
+_traverse_certchain() {
   index="$1" type=
   while [ "$CHAIN_INCLUDE" != "$type" ] && [ -n "$index" ]; do
     cert_file="$(get_value_from_index "$index" "cert")"
@@ -211,44 +129,42 @@ show_index() {
         return 0
     fi
 
-    echoi "dystopian-crypto Index Summary"
+    log_note "dystopian-crypto Index Summary"
     echo "  =============================="
     echo ""
 
     # Show default CA
     if has_defaultRootCA; then
       default_root_ca="$(get_value_from_ca_index "$(get_defaultRootCA)" "name")"
-      echoi "Default RootCA: $default_root_ca"
+      log_note "Default RootCA: $default_root_ca"
     fi
 
     if has_defaultCA; then
       default_ca="$(get_value_from_ca_index "$(get_defaultCA)" "name")"
-      echoi "Default CA: $default_ca"
+      log_note "Default CA: $default_ca"
     fi
 
     if [ "$show_ca" = "true" ] || [ "$show_keys" = "false" ]; then
         echo ""
-        echoi "Certificate Authorities:"
+        log_note "Certificate Authorities:"
         # Show root CAs
-        echoi "  Root CAs:"
+        log_note "  Root CAs:"
         jq -r '.ssl.rootCAs | to_entries[] | "    - " + .key' -- "$DC_DB" 2>/dev/null || echo "  None"
 
         # Show intermediate CAs
-        echoi "  Intermediate CAs:"
+        log_note "  Intermediate CAs:"
         jq -r '.ssl.intermediateCAs | to_entries[] | "    - " + .key' -- "$DC_DB" 2>/dev/null || echo "  None"
-        echo ""
     fi
 
     if [ "$show_keys" = "true" ] || [ "$show_ca" = "false" ]; then
-        echoi "Keys and Certificates:"
-        echo "  ----------------------"
+        log_note "Keys and Certificates:"
+        log_note "  ----------------------"
         key_count=$(jq -r '.ssl.certs | length' -- "$DC_DB")
 
         if [ "$VERBOSE" -eq 1 ]; then
             jq -r '.ssl.certs | to_entries[] | "  - " + .key + ": " + (.value | to_entries | map(.key + "=" + .value) | join(", "))' -- "$DC_DB" 2>/dev/null
         fi
-        echo ""
-        echos "Total key entries: $key_count"
+        log_success "Total key entries: $key_count"
     fi
 }
 
@@ -265,24 +181,24 @@ cleanup_dcrypto_files() {
   cleanup_salt="${cleanup_salt:-"${cleanup_index:+"$(get_value_from_ca_index "$cleanup_index" "salt")"}"}"
   cleanup_key="${cleanup_salt:+${cleanup_index:+$(get_value_from_index "$cleanup_index" "key")}}"
 
-  echod "Starting cleanup_dcrypto_files with parameters:"
-  echod "        cleanup_index: $cleanup_index"
-  echod "     cleanup_orphaned: $cleanup_orphaned"
-  echod "      cleanup_backups: $cleanup_backups"
-  echod "  cleanup_non_ca_keys: $cleanup_non_ca_keys"
-  echod "      cleanup_dry_run: $cleanup_dry_run"
-  echod " cleanup_keep_backups: $cleanup_keep_backups"
-  echod "   cleanup_passphrase: $cleanup_passphrase"
-  echod "         cleanup_salt: $cleanup_salt"
-  echod "          cleanup_key: $cleanup_key"
-  echod "            DC_CFGDIR: $DC_CFGDIR"
-  echod "                DC_DB: $DC_DB"
+  log_debug "Starting cleanup_dcrypto_files with parameters:"
+  log_debug "        cleanup_index: $cleanup_index"
+  log_debug "     cleanup_orphaned: $cleanup_orphaned"
+  log_debug "      cleanup_backups: $cleanup_backups"
+  log_debug "  cleanup_non_ca_keys: $cleanup_non_ca_keys"
+  log_debug "      cleanup_dry_run: $cleanup_dry_run"
+  log_debug " cleanup_keep_backups: $cleanup_keep_backups"
+  log_debug "   cleanup_passphrase: $cleanup_passphrase"
+  log_debug "         cleanup_salt: $cleanup_salt"
+  log_debug "          cleanup_key: $cleanup_key"
+  log_debug "            DC_CFGDIR: $DC_CFGDIR"
+  log_debug "                DC_DB: $DC_DB"
 
-  echoi "dystopian-crypto Cleanup${cleanup_dry_run:+$([ "$cleanup_dry_run" = true ] && echo "DRY RUN")}"
-  echoi "=============="
+  log_note "dystopian-crypto Cleanup${cleanup_dry_run:+$([ "$cleanup_dry_run" = true ] && echo "DRY RUN")}" "$0"
+  log_note "=============="
 
   if [ -z "$cleanup_salt" ] && [ -n "$cleanup_passphrase" ]; then
-    echow "Entry is not protected. Passphrase parameter not necessary!"
+    log_warn "Entry is not protected. Passphrase parameter not necessary!"
   fi
 
   defaultCA=$(get_defaultCA)
@@ -290,13 +206,17 @@ cleanup_dcrypto_files() {
 
   # Clean specific index
   if [ -n "$cleanup_index" ]; then
-    echoi "Cleaning up specific index: $cleanup_index"
+    log_note "Cleaning up specific index: $cleanup_index"
     if ! has_index "$cleanup_index"; then
-      echoe "Index $cleanup_index does not exist in $DC_DB"
+      log_error "Index $cleanup_index does not exist in $DC_DB"
       return 1
     fi
     if [ "$cleanup_dry_run" != true ]; then
       if [ -s "$cleanup_salt" ]; then
+        if [ -z "$cleanup_passphrase" ]; then
+          log_error "Passphrase is required for protected entry cleanup"
+          return 1
+        fi
         algo=$(get_value_from_index "$cleanup_index" 'algo')
         [ "$algo" = 'EC' ] && key_opt="ec_paramgen_curve:secp384r1" || key_opt="rsa_keygen_bits:4096"
         algo_param=$(echo "$algo" | tr "[:upper:]" "[:lower:]")
@@ -305,14 +225,14 @@ cleanup_dcrypto_files() {
                 -passin "pass:$(derive_key_from_passphrase "$cleanup_passphrase" "$cleanup_salt" 'cleanup process execution' "false" | tr -d '\n\r')" \
                 -check \
                 -noout >/dev/null 2>&1 || {
-          echoe "Passphrase verification failed. Wrong passphrase."
+          log_error "Passphrase verification failed. Wrong passphrase."
           return 1
         }
-        echosv "Correct passphrase. Deleting entry..."
+        log_success "Correct passphrase. Deleting entry..."
       fi
       manage_truststore "$cleanup_index" "uninstall"
       delete_ssl_index "$cleanup_index" || {
-          echoe "Failed to clean index $cleanup_index"
+          log_error "Failed to clean index $cleanup_index"
           return 1
       }
 
@@ -322,17 +242,17 @@ cleanup_dcrypto_files() {
         set_defaultRootCA ""
       fi
 
-      echos "Index $cleanup_index cleaned successfully"
+      log_success "Index $cleanup_index cleaned successfully"
     else
-      echov "Dry run: Would clean index $cleanup_index"
+      log_info "Dry run: Would clean index $cleanup_index"
     fi
     return 0
   fi
 
   # Clean orphaned files
   if [ "$cleanup_orphaned" = "true" ]; then
-    echoi "Finding orphaned files..."
-    tmpfile_orphaned=$(mktemp) || { echoe "Failed to create temporary import_file for orphaned files"; return 1; }
+    log_note "Finding orphaned files..."
+    tmpfile_orphaned=$(mktemp) || { log_error "Failed to create temporary import_file for orphaned files"; return 1; }
     find "$DC_CFGDIR" -type f \( -name "*.pem" -o -name "*.csr" -o -name "*.conf" -o -name "*.salt" -o -name "*.srl" \) > "$tmpfile_orphaned"
     found_orphaned=false
     while read -r import_file; do
@@ -342,7 +262,7 @@ cleanup_dcrypto_files() {
       [ -z "$file_ext" ] && file_ext="${file_name#*.*.}"
       [ -z "$file_ext" ] && file_ext="${file_name#*.}"
       [ -z "$file_ext" ] && return 1
-      echod "Checking if import_file is orphaned: $file_path"
+      log_debug "Checking if import_file is orphaned: $file_path"
       case "$file_ext" in
         csr) k="csr";;
         conf|cfg) k="cfg";;
@@ -358,31 +278,31 @@ cleanup_dcrypto_files() {
       idx="$(find_index_by_key_value "$k" "$file_path")"
       if [ -z "$idx" ]; then
         found_orphaned=true
-        echoi "Orphaned file: $file_path"
+        log_note "Orphaned file: $file_path"
         if [ "$cleanup_dry_run" != "true" ]; then
             rm -f -- "$file_path" || {
-                echoe "Failed to remove orphaned import_file: $file_path"
+                log_error "Failed to remove orphaned import_file: $file_path"
                 break
             }
-            echos "Removed orphaned import_file: $file_path"
+            log_success "Removed orphaned import_file: $file_path"
         else
-            echov "Dry run: Would remove orphaned import_file: $file_path"
+            log_info "Dry run: Would remove orphaned import_file: $file_path"
         fi
       else
-        echoe "Found"
+        log_error "Found"
       fi
     done < "$tmpfile_orphaned"
     rm -f -- "$tmpfile_orphaned"
     if [ "$found_orphaned" = "false" ]; then
-        echoi "No orphaned files found"
+        log_note "No orphaned files found"
     fi
-    echos "Orphaned import_file cleanup completed"
+    log_success "Orphaned import_file cleanup completed"
   fi
 
   # Clean backup files
   if [ "$cleanup_backups" = "true" ]; then
-    echoi "Cleaning up backup files..."
-    tmpfile_backups=$(mktemp) || { echoe "Failed to create temporary import_file for backup files"; return 1; }
+    log_note "Cleaning up backup files..."
+    tmpfile_backups=$(mktemp) || { log_error "Failed to create temporary import_file for backup files"; return 1; }
     find "$DC_CFGDIR" -type f \( -name "*bkp*" -o -name "cert.[0-9]*.csr" \) > "$tmpfile_backups"
     found_backups=false
     while IFS= read -r backup_file < "$tmpfile_backups"; do
@@ -397,136 +317,135 @@ cleanup_dcrypto_files() {
         if [ "$total_backups" -gt "$cleanup_keep_backups" ]; then
           delete_count=$((total_backups - cleanup_keep_backups))
           echo "$backup_files" | head -n "$delete_count" | while IFS= read -r old_backup; do
-            echoi "Backup import_file (index $index): $old_backup"
+            log_note "Backup import_file (index $index): $old_backup"
             if [ "$cleanup_dry_run" != "true" ]; then
               rm -f -- "$old_backup" || {
-                echoe "Failed to remove backup import_file: $old_backup"
+                log_error "Failed to remove backup import_file: $old_backup"
                 continue
               }
               # Remove from index.json
               bkp_key=$(jq -r --arg idx "$index" --arg path "$old_backup" '.ssl.keys[$idx] | to_entries[] | select(.value == $path) | .key' -- "$DC_DB")
               if jq -e "del(.ssl.keys.\"$index\".\"$bkp_key\")" -- "$DC_DB" > "$DC_DB.tmp"; then
                 mv -- "$DC_DB.tmp" "$DC_DB" || {
-                  echoe
+                  log_error "Failed"
                 }
                 set_permissions_and_owner "$DC_DB" 600
               else
-                echoe "Failed to update index.json for backup import_file: $old_backup"
+                log_error "Failed to update index.json for backup import_file: $old_backup"
                 continue
               fi
-              echos "Removed backup import_file: $old_backup"
+              log_success "Removed backup import_file: $old_backup"
             else
-                echov "Dry run: Would remove backup import_file: $old_backup"
+                log_info "Dry run: Would remove backup import_file: $old_backup"
             fi
           done
         else
-            echod "Keeping backup import_file (within limit $cleanup_keep_backups): $backup_file_path"
+            log_debug "Keeping backup import_file (within limit $cleanup_keep_backups): $backup_file_path"
         fi
       else
-        echoi "Backup import_file (no index): $backup_file_path"
+        log_note "Backup import_file (no index): $backup_file_path"
         if [ "$cleanup_dry_run" != "true" ]; then
           rm -f -- "$backup_file_path" || {
-              echoe "Failed to remove backup import_file: $backup_file_path"
-              continue
+            log_error "Failed to remove backup import_file: $backup_file_path"
+            continue
           }
-          echos "Removed backup import_file: $backup_file_path"
+          log_success "Removed backup import_file: $backup_file_path" INFO
         else
-          echov "Dry run: Would remove backup import_file: $backup_file_path"
+          log_info "Dry run: Would remove backup import_file: $backup_file_path"
         fi
       fi
     done
     rm -f -- "$tmpfile_backups" || {
-      echoe "Failed rempving"
+      log_error "Failed rempving"
     }
     if [ "$found_backups" = "false" ]; then
-        echoi "No backup files found"
+      log_note "No backup files found"
     fi
-    echos "Backup import_file cleanup completed"
+    log_success "Backup import_file cleanup completed" INFO
   fi
 
   # Clean non-CA keys
   if [ "$cleanup_non_ca_keys" = "true" ]; then
-    echoi "Cleaning up non-CA key files..."
-    tmpfile_keys=$(mktemp) || { echoe "Failed to create temporary import_file for non-CA keys"; return 1; }
+    log_note "Cleaning up non-CA key files..."
+    tmpfile_keys=$(mktemp) || { log_error "Failed to create temporary import_file for non-CA keys"; return 1; }
     jq -r '.ssl.keys | to_entries[] | .key + " " + .value.key' -- "$DC_DB" > "$tmpfile_keys"
     found_keys=false
     while IFS= read -r line < "$tmpfile_keys"; do
       found_keys=true
       index=$(echo "$line" | cut -d' ' -f1)
       key_file=$(echo "$line" | cut -d' ' -f2- | sed 's/^"\(.*\)"$/\1/')
-      echod "Checking key import_file: $key_file (index $index)"
+      log_debug "Checking key import_file: $key_file (index $index)"
       # Get CA keys from index.json
       ca_keys=$(jq -r '.ssl.rootCAs // .ssl.intermediateCAs | to_entries[] | .value | to_entries[] | .value | select(.key == "key") | .value' -- "$DC_DB" | sed 's/^"\(.*\)"$/\1/')
       # Skip if key is a CA key
       if echo "$ca_keys" | grep -Fx "$key_file" >/dev/null 2>&1; then
-          echod "Key $key_file is a CA key, skipping"
+          log_debug "Key $key_file is a CA key, skipping"
           continue
       fi
-      echoi "Non-CA key import_file: $key_file (index $index)"
+      log_note "Non-CA key import_file: $key_file (index $index)"
       if [ "$cleanup_dry_run" != "true" ]; then
           rm -f -- "$key_file" || {
-              echoe "Failed to remove non-CA key import_file: $key_file"
+              log_error "Failed to remove non-CA key import_file: $key_file"
               continue
           }
           # Remove the entire index entry
           if jq -e "del(.ssl.keys.\"$index\")" -- "$DC_DB" > "$DC_DB.tmp"; then
               mv -- "$DC_DB.tmp" "$DC_DB" || {
-                echoe "Failed moving temporary database $DC_DB"
+                log_error "Failed moving temporary database $DC_DB"
                 return 1
               }
               set_permissions_and_owner "$DC_DB" 600
           else
-              echoe "Failed to update index.json for non-CA key: $key_file"
+              log_error "Failed to update index.json for non-CA key: $key_file"
               continue
           fi
-          echos "Removed non-CA key import_file: $key_file"
+          log_success "Removed non-CA key import_file: $key_file" INFO
       else
-          echov "Dry run: Would remove non-CA key import_file: $key_file"
+          log_info "Dry run: Would remove non-CA key import_file: $key_file"
       fi
     done
     rm -f -- "$tmpfile_keys" >/dev/null
     if [ "$found_keys" = "false" ]; then
-        echoi "No non-CA key files found"
+      log_note "No non-CA key files found"
     fi
-    echos "Non-CA key cleanup completed"
+    log_success "Non-CA key cleanup completed" INFO
   fi
 
   # Display cleanup completion message
   if [ "$cleanup_dry_run" = "true" ]; then
-      echos "dystopian-crypto cleanup completed successfully (DRY RUN)"
+    log_success "dystopian-crypto cleanup completed successfully (DRY RUN)"
   else
-      echos "dystopian-crypto cleanup completed successfully"
+    log_success "dystopian-crypto cleanup completed successfully"
   fi
   return 0
 }
 
+
 list_certificate_authorities() {
   ca_list_type="${1:-all}"
 
-  echoi "Certificate Authorities"
-  echoi "======================"
+  log_note "Certificate Authorities"
+  log_note "======================"
 
   if [ "$ca_list_type" = "all" ] || [ "$ca_list_type" = "root" ]; then
-    echoi ""
-    echoi "Root CAs:"
-    echoi "---------"
+    log_note "Root CAs:"
+    log_note "---------"
     jq -r '.ssl.rootCAs | to_entries[] | .key + " | " + (.value.name // "Unnamed") + " | " + (.value.created // "Unknown date")' -- "$DC_DB" 2>/dev/null | \
     while IFS='|' read -r index name created; do
       printf "  %-12s %-30s %s\n" "$index" "$name" "$created"
       if [ "$VERBOSE" -eq 1 ]; then
         cert_file=$(_get_ca_value "root" "$(echo "$index" | tr -d ' ')" "cert")
         if [ -f "$cert_file" ]; then
-          echoi "    Certificate: $cert_file"
-          echoi "    Subject: $(openssl x509 -in "$cert_file" -noout -subject | sed 's/subject=//')"
+          log_note "    Certificate: $cert_file"
+          log_note "    Subject: $(openssl x509 -in "$cert_file" -noout -subject | sed 's/subject=//')" "$0"
         fi
       fi
     done
   fi
 
   if [ "$ca_list_type" = "all" ] || [ "$ca_list_type" = "intermediate" ]; then
-    echoi ""
-    echoi "Intermediate CAs:"
-    echoi "-----------------"
+    log_note "Intermediate CAs:"
+    log_note "-----------------"
     jq -r '.ssl.intermediateCAs | to_entries[] |
            .key + " | " + (.value.name // "Unnamed") + " |
            " + (.value.created // "Unknown date")' -- "$DC_DB" 2>/dev/null | \
@@ -535,8 +454,8 @@ list_certificate_authorities() {
       if [ "$VERBOSE" -eq 1 ]; then
         cert_file=$(_get_ca_value "intermediate" "$(echo "$index" | tr -d ' ')" "cert")
         if [ -f "$cert_file" ]; then
-          echoi "    Certificate: $cert_file"
-          echoi "    Subject: $(openssl x509 -in "$cert_file" -noout -subject | sed 's/subject=//')"
+          log_note "    Certificate: $cert_file"
+          log_note "    Subject: $(openssl x509 -in "$cert_file" -noout -subject | sed 's/subject=//')" "$0"
         fi
       fi
     done
@@ -550,13 +469,13 @@ key_belongs_to_cert() {
   keypub=$(openssl ec -in "$key_file" -pubout 2>/dev/null || \
            openssl rsa -in "$key_file" -pubout 2>/dev/null)
   if [ -z "$keypub" ]; then
-      echod "Couldn't determine publickey in keyfile: $key_file"
+      log_debug "Couldn't determine publickey in keyfile: $key_file"
       return 1
   fi
   keypub=$(echo "$keypub" | tail -n +2 | head -n -1)
   certpub=$(openssl x509 -in "$cert_file" -noout -pubkey | tail -n +2 | head -n -1)
   if [ "$keypub" = "$certpub" ]; then
-      echod "Publickey of $key_file and $cert_file are identical"
+      log_debug "Publickey of $key_file and $cert_file are identical"
       return 0
   fi
   return 1
@@ -594,7 +513,7 @@ get_file_type() {
 
 
 check_ssl_database() {
-  echoi "Checking database integrity"
+  log_note "Checking database integrity"
   files=$(find "$DC_CA" -type f -maxdepth 1)
   for f in $files; do
     f="$(realpath "$f")"
@@ -602,7 +521,7 @@ check_ssl_database() {
     if ! jq -e --arg idx "$ca_name" '.ssl.rootCAs //
                                     .ssl.intermediateCAs | to_entries[] |
                                     select(.key == $idx)' -- "$DC_DB"; then
-        echow "File is missing in database: $f"
+        log_warn "File is missing in database: $f"
     fi
   done
 }
@@ -614,14 +533,14 @@ set_permissions_and_owner() {
     perm=400
   fi
   if ! chmod -- "$perm" "$1" 2>/dev/null; then
-    echoe "Failed to set permissions $perm on $1"
+    log_error "Failed to set permissions $perm on $1"
     return 1
   fi
   if ! chown "root:${DYSTOPIAN_USER}" "$1" 2>/dev/null; then
-    echoe "Failed to set owner root:${DYSTOPIAN_USER} on $1"
+    log_error "Failed to set owner root:${DYSTOPIAN_USER} on $1"
     return 1
   fi
-  echod "Successfully set perm ($perm) and owner 'root:$DYSTOPIAN_USER' on $1"
+  log_debug "Successfully set perm ($perm) and owner 'root:$DYSTOPIAN_USER' on $1"
   return 0
 }
 
@@ -672,20 +591,20 @@ get_index_from_filename() {
 
 
 _cleanup() {
-  echod "Cleaning up generated files..."
+  log_debug "Cleaning up generated files..."
   for file in $DYSTOPIAN_CLEANUP_FILES; do
       rm -rf -- "$file"
   done
-  echod "done."
+  log_debug "done."
 }
 
 
 set_perms_trap() {
-  echod "Setting permissions and ownership..."
+  log_debug "Setting permissions and ownership..."
   for file in $DYSTOPIAN_PERM_FILES; do
       set_permissions_and_owner "$file" 440
   done
-  echod "done."
+  log_debug "done."
 }
 
 
@@ -702,7 +621,7 @@ get_gh_repo() {
        -H "Authorization: Bearer $(get_github_token)" \
        -H 'Accept: application/json' \
        "$GH_API_BASE/$owner/$repo" || {
-         echoe "Error fetching repo from Github Api"
+         log_error "Error fetching repo from Github Api"
          return 1
        }
   return 0
@@ -716,7 +635,7 @@ get_index_from_gpg() {
        awk -F' <' '{print $1}' | \
        sed -e 's/\-/\_/g' -e 's/\ /\_/g' | \
        tr "[:upper:]" "[:lower:]"; then
-      echoe "Failed getting index from gpg name"
+      log_error "Failed getting index from gpg name"
       return 1
   fi
   return 0
@@ -728,7 +647,7 @@ get_name_from_gpg() {
        grep uid | \
        awk -F'[][]' '{print $(NF-0)}' | \
        awk -F' <' '{print $1}'; then
-      echoe "Failed getting Name from $1"
+      log_error "Failed getting Name from $1"
       return 1
   fi
   return 0
@@ -740,7 +659,7 @@ get_email_from_gpg() {
        grep uid | \
        awk -F'<' '{print $2}' | \
        awk -F'>' '{print $1}'; then
-      echoe "Error getting email address from $1"
+      log_error "Error getting email address from $1"
       return 1
   fi
   return 0
@@ -751,7 +670,7 @@ get_fingerprint_from_gpg() {
   if ! gpg --homedir "$DC_GNUPG" --fingerprint --keyid-format long "$1" | \
        grep -i finger | \
        awk -F'= ' '{print $2}'; then
-      echoe "Failed getting fingerprint from $1"
+      log_error "Failed getting fingerprint from $1"
       return 1
   fi
   return 0
@@ -763,7 +682,7 @@ get_subkey_ids_from_gpg() {
        grep sub | \
        awk -F'/' '{print $2}' | \
        awk -F' ' '{print $1}'; then
-      echoe "Failed getting subkeys from $1"
+      log_error "Failed getting subkeys from $1"
       return 1
   fi
   return 0
@@ -876,7 +795,7 @@ check_gpg_key_integrity() {
   pubkbx="$tmpdir/pubring.kbx"
 
   touch -- "$pubkbx" || {
-    echoe "Not able to create pubring.kbx for key integrity check."
+    log_error "Not able to create pubring.kbx for key integrity check."
     return 1
   }
 
@@ -886,17 +805,17 @@ check_gpg_key_integrity() {
         ssl_build_cmd "$2" "$1"
         $SSL_CMD | gpg --batch --homedir "$tmpdir" --import -- "$1"
     else
-        echoe "Key is not a GPG key"
+        log_error "Key is not a GPG key"
     fi
 
     if [ "$?" -ne 0 ]; then
-        echoe "Key integrity check failed"
+        log_error "Key integrity check failed"
         rm -rf -- "$tmpdir"
         return 1
     fi
 
     rm -rf -- "$tmpdir" || {
-      echoe "Failed removing temporary GPG home directory"
+      log_error "Failed removing temporary GPG home directory"
       return 1
     }
 
@@ -904,7 +823,7 @@ check_gpg_key_integrity() {
 }
 
 
-install_package() {
+_install_package() {
     package="$1"
 
     if [ -f /etc/os-release ]; then
@@ -919,35 +838,35 @@ install_package() {
             esac
         done < /etc/os-release
     else
-        echoe "Cannot detect distribution. /etc/os-release not found."
+        log_error "Cannot detect distribution. /etc/os-release not found."
         return 1
     fi
 
     case "$distro" in
         ubuntu | debian)
-            echov "Detected $distro. Using apt to install $package..."
+            log_info "Detected $distro. Using apt to install $package..."
             # Update package lists
             apt update
             # Install the package
             if apt install -y "$package"; then
-                echoi "$package installed successfully"
+                log_note "$package installed successfully"
             else
-                echoe "Failed to install $package"
+                log_error "Failed to install $package"
                 return 1
             fi
             ;;
         arch)
-            echov "Detected Arch Linux. Using pacman to install $package..."
+            log_info "Detected Arch Linux. Using pacman to install $package..."
             # Sync and install the package
             if pacman -S --noconfirm "$package"; then
-                echoi "$package installed successfully."
+                log_note "$package installed successfully."
             else
-                echoe "Failed to install $package"
+                log_error "Failed to install $package"
                 return 1
             fi
             ;;
         *)
-            echoe "Unsupported distribution: $distro"
+            log_error "Unsupported distribution: $distro"
             return 1
             ;;
     esac
@@ -969,45 +888,45 @@ trigger_remount_efivars() {
 
 
 remount_efivars_rw() {
-    echod "Remounting efivars to read/write"
+    log_debug "Remounting efivars to read/write"
     mount -o rw,remount -- "$EFIVAR_PATH" || {
-        echoe "Failed remounting efivars to read/write"
+        log_error "Failed remounting efivars to read/write"
         return 1
     }
-    echod "$(mount | grep efivars)"
+    log_debug "$(mount | grep efivars)"
     return 0
 }
 
 
 remount_efivars_ro() {
-    echod "Remounting efivars to read only"
+    log_debug "Remounting efivars to read only"
     mount -o ro,remount -- "$EFIVAR_PATH" || {
-        echoe "Failed remounting efivars to read only"
+        log_error "Failed remounting efivars to read only"
         return 1
     }
-    echod "$(mount | grep efivars)"
+    log_debug "$(mount | grep efivars)"
     return 0
 }
 
 
 ssl_convert_der_to_pem() {
     base="${1%.*}"
-    echod "Converting DER to PEM:"
+    log_debug "Converting DER to PEM:"
     openssl x509 -inform "${1##*.}" -outform pem -in "$1" -out "${1%.*}.pem"
-    echod "Converted $1 to ${1%.*}.pem"
+    log_debug "Converted $1 to ${1%.*}.pem"
 }
 
 
 ssl_convert_pem_to_der() {
     ext="${1##*.}"
-    echod "Converting PEM to DER:"
+    log_debug "Converting PEM to DER:"
     openssl x509 -inform "${1##*.}" -outform der -in "$1" -out "${1%.*}.der"
-    echod "Converted $1 to ${1%.*}.der"
+    log_debug "Converted $1 to ${1%.*}.der"
 }
 
 
 download_ms_kek_certs() {
-    echoi "Downloading Microsoft Corporation KEK CA 2011 certificate and  Microsoft Corporation KEK 2K CA 2023..."
+    log_note "Downloading Microsoft Corporation KEK CA 2011 certificate and  Microsoft Corporation KEK 2K CA 2023..."
     pk=$(wget -qO - "")
 
 }
@@ -1025,11 +944,11 @@ detect_distro() {
             esac
         done < /etc/os-release
     else
-        echoe "Cannot detect distribution. /etc/os-release not found."
+        log_error "Cannot detect distribution. /etc/os-release not found."
         return 1
     fi
 
-    echod "Detected distribution: $distro"
+    log_debug "Detected distribution: $distro"
 }
 
 
@@ -1040,7 +959,7 @@ check_secureboot_status() {
     awk -F' ' '{print $NF}'
   )
   if [ "$?" -ne 0 ]; then
-    echoe "Failed checking secureboot status"
+    log_error "Failed checking secureboot status"
     return 1
   fi
   return 0
@@ -1054,7 +973,7 @@ get_gh_repo_release() {
        -H "Authorization: Bearer $(get_github_token)" \
        -H "Accept: application/json" \
        "$GH_API_BASE/$owner/$repo/releases" || {
-         echoe "Error fetching release from Github Api"
+         log_error "Error fetching release from Github Api"
          return 1
        }
   return 0
@@ -1096,13 +1015,13 @@ preparse() {
             if [ $# -gt 1 ]; then
                 DYSTOPIAN_USER="$2"; shift 2
             else
-                echoe "--user requires an argument"; exit 1
+                log_error "--user requires an argument"; exit 1
             fi
         fi
         case "$1" in
-            --verbose|-v) VERBOSE=1; shift;;
+            --verbose|-v) VERBOSE=1; DEBUG=0; QUIET=0; shift;;
             --quiet|-q) DEBUG=0; VERBOSE=0; QUIET=1; shift;;
-            --debug) DEBUG=1; VERBOSE=1; shift;;
+            --debug) DEBUG=1; VERBOSE=0; QUIET=0; shift;;
             --external|--ext|--usb|--external=*|--ext=*|--usb=*)
               USB_STORAGE=
               shift
@@ -1124,7 +1043,7 @@ download_and_install_latest_releases() {
   cwd="$1"
   tmpdir=$(mktemp -d ./XXXXXX)
   cd -- "$tmpdir" || {
-    echoe "Failed changing directory: $tmpdir"
+    log_error "Failed changing directory: $tmpdir"
     return 1
   }
   for pkg in "${DYSTOPIAN_PACKAGES[@]}"; do
@@ -1133,7 +1052,7 @@ download_and_install_latest_releases() {
     sudo make -C "$pkg" install
   done
   cd -- "$cwd" || {
-    echoe "Failed changing directory: $tmpdir"
+    log_error "Failed changing directory: $tmpdir"
     return 1
   }
   if ! rm -rf -- "$tmpdir"; then
@@ -1145,85 +1064,12 @@ download_and_install_latest_releases() {
 
 cleanup_stack_gpghome() {
   rm -rf -- "$PROJECT_DIR/.certs/.gnupg" || {
-    echoe "Failed removing"
+    log_error "Failed removing"
     return 1
   }
   export GNUPGHOME=$OLDGNUPGHOME
 }
 
-
-format_storage() {
-  stor_path="$1"
-  max_storage="${2:-2G}"
-  size_fat32="${3:-129MiB}"
-
-  if ! askyesno "Do you really want to format the storage device?" "n"; then
-    echoi "Aborted formating storage device $stor_path"
-    exit 0
-  fi
-  umount "${stor_path}*" 2>/dev/null || true
-
-  if ! askyesno "Are you sure you want to wipe the storage device??" "n"; then
-    echoi "Aborted."
-    exit 0
-  fi
-
-  wipefs -a "$stor_path"
-  parted -s "$stor_path" mklabel gpt
-  parted -s "${stor_path}" mkpart primary fat32 1MiB "$size_fat32"
-  parted -s "${stor_path}" mkpart primary "$size_fat32" "$max_storage"
-  mkfs.vfat -F 32 -n "UEFI_Update" "${stor_path}1"
-
-  cryptsetup luksFormat \
-    --type luks2 \
-    --cipher aes-xts-plain64 \
-    --key-size 512 \
-    --hash sha512 \
-    --iter-time 5000 \
-    --pbkdf argon2id \
-    --sector-size 4096 \
-    "${stor_path}2"
-
-  USB_SERIAL=$(
-    lsblk -o NAME,SIZE,MODEL,SERIAL,LABEL,MOUNTPOINT,FSTYPE \
-      | grep -E "$stor_path" \
-      | head -1 \
-      | awk -F' ' '{print $NF-1}'
-    )
-
-  cryptsetup luksOpen "${stor_path}2" usb_crypt
-  mkfs.ext4 -L "${USB_LABEL:-DYSTO_CERTS}" /dev/mapper/usb_crypt
-  cryptsetup close usb_crypt
-
-
-  sed -i "s/# USB_SERIAL*|USB_SERIAL*/USB_SERIAL=$(id -u).$USB_SERIAL/" -- "$DC_CFG"
-  set_permissions_and_owner "$DC_CFG" 600
-  echos "Successfully formated USB storage devices ${stor_path} - ${USB_LABEL}"
-}
-
-
-usb_storage_missing() {
-  counter=0
-  counter_max="${COUNTER_MAX:-5}"
-  device_id="${1:-$USB_DEVICE_ID}"
-  device_path="sd$(lsblk -o NAME,SIZE,MODEL,SERIAL,LABEL,MOUNTPOINT,FSTYPE \
-    | grep -E "$device_id" -A3 \
-    | grep -E "crypto_LUKS" \
-    | awk -F'sd' '{print $2}' \
-    | awk -F' ' '{print $1}')"
-  echow "USB Storage Device not found or plugged in!"
-
-  while [ $counter -le "$counter_max" ]; do
-    if askyesno "Insert Storage Device ${device_path} and press Enter:" "y"; then
-      if [ ! -f "$device_path" ]; then
-        echosv "USB storage device "
-      fi
-    else
-      :
-    fi
-    counter=$(("$counter" + 1))
-  done
-}
 
 _manage_system_truststore() {
   index="$1"
@@ -1234,7 +1080,7 @@ _manage_system_truststore() {
   perms="444"
 
   if [ "$type" != "cert" ]; then
-      echoe "Only cert type supported"
+      log_error "Only cert type supported"
       return 1
   fi
 
@@ -1244,119 +1090,119 @@ _manage_system_truststore() {
   ts_path="$ts_anchors/$slug"
 
   if [ "$process" = "install" ]; then
-    echoi "Installing certificate into system trust store..."
+    log_note "Installing certificate into system trust store..."
 
     # Manual fallback for p11-kit systems (Arch, etc.)
     if [ -d "$ts_anchors" ]; then
-      echov "Detected p11-kit anchors directory (e.g. Arch Linux)."
+      log_info "Detected p11-kit anchors directory (e.g. Arch Linux)."
       # Preferred modern way: trust anchor --store (works on Arch, Fedora, etc.)
       if command -v trust >/dev/null 2>&1; then
 
         if trust anchor "$ck_path" >/dev/null 2>&1; then
-          echod "Certificate installed from system trust database via 'trust anchor' (p11-kit)."
+          log_debug "Certificate installed from system trust database via 'trust anchor' (p11-kit)."
           return 0
         else
-          echow "'trust anchor --store' failed, falling back to manual placement."
+          log_warn "'trust anchor --store' failed, falling back to manual placement."
         fi
       else
         cp "$ck_path" "$ts_path" || {
-          echoe "Failed to copy certificate"
+          log_error "Failed to copy certificate"
           return 1
         }
         set_permissions_and_owner "$ts_path" "$perms"
       fi
 
       if update-ca-trust >/dev/null 2>&1; then
-          echosv "Certificate installed in system trust database (manual p11-kit)."
-          return 0
+        log_success "Certificate installed in system trust database (manual p11-kit)." INFO
+        return 0
       else
-          echoe "Failed to run 'trust update-ca-trust'"
-          return 1
+        log_error "Failed to run 'trust update-ca-trust'"
+        return 1
       fi
 
     # Debian/Ubuntu fallback
     elif [ -d /usr/local/share/ca-certificates ]; then
-      echov "Detected Debian/Ubuntu style trust store."
+      log_info "Detected Debian/Ubuntu style trust store."
       ts_path="/usr/local/share/ca-certificates/$index/$slug"
-      cp "$ck_path" "$ts_path" || { echoe "Failed to copy certificate"; return 1; }
+      cp "$ck_path" "$ts_path" || { log_error "Failed to copy certificate"; return 1; }
       set_permissions_and_owner "$ts_path" "$perms"
       if update-ca-certificates; then
-          echosv "Certificate installed in system trust database (Debian/Ubuntu)."
-          return 0
+        log_success "Certificate installed in system trust database (Debian/Ubuntu)." INFO
+        return 0
       else
-          echoe "Failed to run 'update-ca-certificates'"
-          return 1
+        log_error "Failed to run 'update-ca-certificates'"
+        return 1
       fi
 
     else
-      echow "No recognized system trust store found. Skipping system-wide install."
-      echow "Applications may still trust via NSS or p11-kit."
+      log_warn "No recognized system trust store found. Skipping system-wide install."
+      log_warn "Applications may still trust via NSS or p11-kit."
       return 1
     fi
 
   elif [ "$process" = "uninstall" ]; then
-    echoi "Uninstalling certificate from system trust store..."
+    log_note "Uninstalling certificate from system trust store..."
     removed=0
 
     # Preferred: trust anchor --remove
     if command -v trust >/dev/null 2>&1; then
       if trust anchor --remove "$(trust list | grep -B3 "$name" | head -1)" >/dev/null 2>&1; then
-          echosv "Certificate uninstalled from system trust store via 'trust anchor --remove'."
-          return 0
+        log_success "Certificate uninstalled from system trust store via 'trust anchor --remove'." INFO
+        return 0
       fi
     fi
 
     # Manual removal
     if [ -d "$ts_anchors" ]; then
-      echov "Detected p11-kit anchors directory."
+      log_info "Detected p11-kit anchors directory."
       ts_path="$ts_anchors/$slug"
       if [ -f "$ts_path" ]; then
-          rm -f "$ts_path"
-          echov "Removed $ts_path"
-          removed=1
+        rm -f "$ts_path"
+        log_info "Removed $ts_path"
+        removed=1
       fi
       if trust extract-compat; then
-          if [ "$removed" = 1 ]; then
-              echosv "Certificate uninstalled from system trust store (manual p11-kit)."
-          fi
+        if [ "$removed" = 1 ]; then
+          log_success "Certificate uninstalled from system trust store (manual p11-kit)." INFO
+        fi
       else
-          echoe "Failed to run 'trust extract-compat'"
-          return 1
+        log_error "Failed to run 'trust extract-compat'"
+        return 1
       fi
 
     elif [ -d /usr/local/share/ca-certificates ]; then
-      echov "Detected Debian/Ubuntu style."
+      log_info "Detected Debian/Ubuntu style."
       ts_path="/usr/local/share/ca-certificates/$slug"
       if [ -f "$ts_path" ]; then
           rm -f "$ts_path"
-          echov "Removed $ts_path"
+          log_info "Removed $ts_path"
           removed=1
       fi
       if update-ca-certificates --fresh; then
           if [ "$removed" = 1 ]; then
-              echosv "Certificate uninstalled from system trust store (Debian/Ubuntu)."
+              log_success "Certificate uninstalled from system trust store (Debian/Ubuntu)." INFO
           fi
       else
-          echoe "Failed to run 'update-ca-certificates'"
+          log_error "Failed to run 'update-ca-certificates'"
           return 1
       fi
 
     else
-        echow "No recognized system trust store found. Assuming already uninstalled."
+        log_warn "No recognized system trust store found. Assuming already uninstalled."
         return 1
     fi
 
     if [ "$removed" -gt 0 ]; then
-        echov "Removed $removed certificates from system trust."
+        log_info "Removed $removed certificates from system trust."
     fi
-    echosv "Uninstallation from system trust store completed."
+    log_success "Uninstallation from system trust store completed." INFO
 
   else
-      echoe "Invalid process: $process"
+      log_error "Invalid process: $process"
       return 1
   fi
 
-  echosv "Truststore operation successful"
+  log_success "Truststore operation successful"
   return 0
 }
 
@@ -1376,7 +1222,7 @@ _manage_browser_truststore() {
                 # Check if directory exists and has a cert db
                 if [ -f "${profile_dir}cert9.db" ] || [ -f "${profile_dir}cert8.db" ]; then
                     if certutil -d sql:"$profile_dir" -A -t "C,," -n "$name" -i "$ck_path" >/dev/null 2>&1; then
-                        echosv "Updated Firefox profile: $(basename "$profile_dir")"
+                        log_success "Updated Firefox profile: $(basename "$profile_dir")" "$0" INFO
                         processed=$((processed + 1))
                     fi
                 fi
@@ -1385,17 +1231,17 @@ _manage_browser_truststore() {
 
         if [ "$trust_type" = "chrome" ] && [ -d "/home/${DYSTOPIAN_USER}/.pki/nssdb" ]; then
             if certutil -d sql:"/home/${DYSTOPIAN_USER}/.pki/nssdb" -A -t "C,," -n "$name" -i "$ck_path" >/dev/null 2>&1; then
-                echosv "Updated Chrome/Chromium/Edge/Brave NSS database."
+                log_success "Updated Chrome/Chromium/Edge/Brave NSS database." INFO
                 processed=$((processed + 1))
             fi
         fi
 
         if [ "$processed" -gt 0 ]; then
-            echov "Please fully restart all browsers for changes to take effect."
-            echosv "Certificate installation to browser trust stores successful ($processed location(s))."
+            log_info "Please fully restart all browsers for changes to take effect."
+            log_success "Certificate installation to browser trust stores successful ($processed location(s))." INFO
             return 0
         else
-            echow "No compatible NSS databases found for installation."
+            log_warn "No compatible NSS databases found for installation."
             return 1
         fi
 
@@ -1405,7 +1251,7 @@ _manage_browser_truststore() {
             for profile_dir in "/home/${DYSTOPIAN_USER}/.mozilla/firefox"/*/; do
                 if [ -f "${profile_dir}cert9.db" ] || [ -f "${profile_dir}cert8.db" ]; then
                     if certutil -d sql:"$profile_dir" -D -n "$name" >/dev/null 2>&1; then
-                        echosv "Removed from Firefox profile: $(basename "$profile_dir")"
+                        log_success "Removed from Firefox profile: $(basename "$profile_dir")" "$0" INFO
                         processed=$((processed + 1))
                     fi
                 fi
@@ -1414,7 +1260,7 @@ _manage_browser_truststore() {
 
         if [ "$trust_type" = "chrome" ] && [ -d "/home/${DYSTOPIAN_USER}/.pki/nssdb" ]; then
             if certutil -d sql:"/home/${DYSTOPIAN_USER}/.pki/nssdb" -D -n "$name" >/dev/null 2>&1; then
-                echosv "Removed from Chrome/Chromium/Edge/Brave NSS database."
+                log_success "Removed from Chrome/Chromium/Edge/Brave NSS database." INFO
                 processed=$((processed + 1))
             fi
         fi
@@ -1422,12 +1268,12 @@ _manage_browser_truststore() {
         if [ "$processed" -gt 0 ]; then
             return 0
         else
-            echow "Certificate '$name' not found in any targeted browser trust stores."
+            log_warn "Certificate '$name' not found in any targeted browser trust stores."
             return 1
         fi
 
     else
-        echoe "Invalid process: $process"
+        log_error "Invalid process: $process"
         return 2
     fi
 }
@@ -1441,16 +1287,16 @@ manage_truststore() {
   cmd="${4:-false}"
 
   if [ -z "$name" ]; then
-    echoe "Certificate name is required"
+    log_error "Certificate name is required"
     return 1
   elif [ -z "$process" ]; then
-    echoe "Management type has to be set (install/uninstall)"
+    log_error "Management type has to be set (install/uninstall)"
     return 1
   fi
 
   ca_cert_path=$(get_value_from_index "$index" "cert")
   if [ -z "$ca_cert_path" ]; then
-    echowv "Certificate path not found for index $index"
+    log_warnv "Certificate path not found for index $index"
     return 1
   fi
 
@@ -1459,18 +1305,18 @@ manage_truststore() {
     "$name") name=$(printf "%s" "$(get_value_from_index "$index" "cn")" | sed 's/\ /\_/g') ;;
   esac
 
-  echod "Starting manage_truststore with parameters:"
-  echod "            index: $index"
-  echod "             name: $name"
-  echod "          process: $process"
-  echod "           stores: $stores"
-  echod "     ca_cert_path: $ca_cert_path"
-  echod "     ca_stor_type: $ca_stor_type"
+  log_debug "Starting manage_truststore with parameters:"
+  log_debug "            index: $index"
+  log_debug "             name: $name"
+  log_debug "          process: $process"
+  log_debug "           stores: $stores"
+  log_debug "     ca_cert_path: $ca_cert_path"
+  log_debug "     ca_stor_type: $ca_stor_type"
 
   if [ "$process" = "uninstall" ] && [ -z "$stores" ]; then
     stores=$(get_value_from_index "$index" "truststores")
     if [ -z "$stores" ]; then
-      echod "Certificate with index: $index not found in any truststores"
+      log_debug "Certificate with index: $index not found in any truststores"
       return 0
     fi
   elif [ "$process" = "install" ] && [ -z "$stores" ]; then
@@ -1480,13 +1326,13 @@ manage_truststore() {
   case "$stores" in
     *[Ff][Ii][Rr][Ee]*|*[Ff][Oo][Xx]*|*[Cc][Hh][Rr][Oo][Mm][Ee]*)
       [ "$DYSTOPIAN_USER" = "root" ] && \
-        echoe "Browser trust requires non-root user (use --user when logged in as root, or use sudo)" && \
+        log_error "Browser trust requires non-root user (use --user when logged in as root, or use sudo)" && \
         return 1
         ;;
   esac
 
   if ! command -v certutil >/dev/null 2>&1; then
-    echoe "certutil not found (nss-tools required)"
+    log_error "certutil not found (nss-tools required)"
     return 1
   fi
 
@@ -1495,17 +1341,17 @@ manage_truststore() {
     for i in $stores; do
       case "$i" in
         *[Ss][Yy][Ss]*)
-          echod "Calling _manage_system_truststore \"$index\" \"cert\" \"$ca_cert_path\" \"$process\" \"$name\""
+          log_debug "Calling _manage_system_truststore \"$index\" \"cert\" \"$ca_cert_path\" \"$process\" \"$name\""
           _manage_system_truststore "$index" "cert" "$ca_cert_path" "$process" "$name"
           case $? in 0) : ;; *) status=1;; esac
           ;;
         *[Cc][Hh][Rr][Oo][Mm][Ee]*)
-          echod "Calling _manage_browser_truststore \"$name\" \"$index\" \"chrome\" \"$ca_cert_path\" \"$process\""
+          log_debug "Calling _manage_browser_truststore \"$name\" \"$index\" \"chrome\" \"$ca_cert_path\" \"$process\""
           _manage_browser_truststore "$name" "$index" "chrome" "$ca_cert_path" "$process"
           case $? in 0) : ;; *) status=1 ;; esac
           ;;
         *[Ff][Ii][Rr][Ee]*|*[Ff][Oo][Xx]*)
-          echod "Calling _manage_browser_truststore \"$name\" \"$index\" \"firefox\" \"$ca_cert_path\" \"$process\""
+          log_debug "Calling _manage_browser_truststore \"$name\" \"$index\" \"firefox\" \"$ca_cert_path\" \"$process\""
           _manage_browser_truststore "$name" "$index" "firefox" "$ca_cert_path" "$process"
           case $? in 0) : ;; *) status=1 ;; esac
           ;;
@@ -1523,10 +1369,10 @@ manage_truststore() {
       esac
     fi
     if [ "$status" -eq 0 ]; then
-      echosv "Successfully processed $index: cert for $stores trust databases."
+      log_success "Successfully processed $index: cert for $stores trust databases."
       return 0
     else
-      echow "One or more trust operations failed."
+      log_warn "One or more trust operations failed."
       return 1
     fi
 
@@ -1541,329 +1387,65 @@ manage_truststore() {
 }
 
 
-prompt_passphrase() {
-  oldtty=$(stty -F /dev/tty -g 2>/dev/null || echo '')
-  trap 'stty -F /dev/tty "$oldtty" 2>/dev/null || stty -F /dev/tty sane 2>/dev/null' INT TERM HUP
-  stty -F /dev/tty -echo 2>/dev/null
-  secret=1 secret2=2
-  if [ "$1" = true ]; then
-    while [ "$secret" != "$secret2" ]; do
-      echow "Enter pass phrase for $2: " "nonl"
-      IFS= read -r secret </dev/tty
-      printf '\n' >&2
-      echow "Verifying - Enter pass phrase for $2: " "nonl"
-      IFS= read -r secret2 </dev/tty
-      if [ "$secret" != "$secret2" ]; then
-        echow "Pass phrase mismatch! Try again!"
-      fi
-    done
-  else
-    echow "Enter pass phrase for $2: " "nonl"
-    IFS= read -r secret </dev/tty
-  fi
-  printf "\n" >&2
-  printf '%s' "$secret"
-  stty -F /dev/tty "$oldtty" 2>/dev/null || stty -F /dev/tty sane 2>/dev/null
-  unset secret secret2
+
+
+prompt() {
+  :
 }
-
-
-init_gpg_env() {
-  export GNUPGHOME="${1:-$DC_GNUPG}"
-  if [ ! -d "$GNUPGHOME" ]; then
-    mkdir -p -- "$GNUPGHOME/gpg.conf.d" || {
-      echoe "Failed creating gnupg home directory"
-      return 1
-    }
-
-  fi
-  if [ ! -f "$GNUPGHOME/gpg.conf.d/trust.conf" ]; then
-    touch "$GNUPGHOME/gpg.conf.d/trust.conf"
-    echo "trust-model always" | tee "$GNUPGHOME/gpg.conf.d/trust.conf"
-  fi
-  if [ ! -f "$GNUPGHOME/pubring.kbx" ]; then
-    gpg --list-secret-keys >/dev/null 2>&1 || true
-  fi
-  [ -n "$GNUPGHOME" ] && echosv "Successfully setup GNUPGHOME"
-}
-
-
-create_tmp_gpg_home() {
-  tmpdir="$(mktemp -d -- /tmp/XXXXXXXXX)"
-  init_gpg_env "$tmpdir" || return 1
-  echo "$tmpdir"
-  return 0
-}
-
-
-create_gpg_home() {
-  init_gpg_env || return 1
-  echo "$GNUPGHOME"
-  return 0
-}
-
 
 exec_as_user() {
   su - "$DYSTOPIAN_USER" -c "$@"
 }
 
 
-# shellcheck disable=SC2086
-login_using_pbkdf2() {
-  host="${1%/}"
-  username="${2:-}"
-  pass="$3"
-  challenge="$4"
+spinner() {
+    msg="$1"
 
-  echov "Logging in using PBKDF2 challenge"
+    spin=$(printf '\u280B\u2819\u2839\u2838\u283C\u2834\u2826\u2827\u2807\u280F')
+    len=$(printf '%s' "$spin" | wc -m)
 
-  iter1=$(echo "$challenge" | cut -d'$' -f2)
-  salt1hex=$(echo "$challenge" | cut -d'$' -f3)
-  iter2=$(echo "$challenge" | cut -d'$' -f4)
-  salt2hex=$(echo "$challenge" | cut -d'$' -f5)
+    use_color=0
+    if [ -t 1 ]; then
+        # Very conservative: assume color if TERM looks common
+        case "$TERM" in
+            *color*|*256*|xterm*|screen*|linux*|tmux*|rxvt*|eterm*)
+                use_color=1
+                ;;
+        esac
+    fi
+    i=0
+    c=0
 
-  hash1_hex=$(
-    openssl kdf \
-            -keylen 32 \
-            -kdfopt "hexsalt:$salt1hex" \
-            -kdfopt "iter:$iter1" \
-            -kdfopt "pass:$pass" \
-            -kdfopt digest:SHA256 \
-            PBKDF2 2>/dev/null | \
-    tr -d '\n: ' | \
-    tr  "[:upper:]" "[:lower:]"
-  )
+    trap 'printf "\r\033[K"; exit 0' INT TERM
 
-  hash2_hex=$(
-    openssl kdf \
-             -keylen 32 \
-             -kdfopt "hexsalt:$salt2hex" \
-             -kdfopt "iter:$iter2" \
-             -kdfopt "hexpass:$hash1_hex" \
-             -kdfopt digest:SHA256 \
-             PBKDF2 2>/dev/null | \
-    tr -d '\n: ' | \
-    tr  "[:upper:]" "[:lower:]"
-  )
+    while : ; do
+        # Get current spinner character (use proper byte-aware slicing)
+        char="\033[35m$(printf '%s' "$spin" | cut -c "$((i + 1))")\033[0m"
 
-  response="${salt2hex}\$${hash2_hex}"
-  if [ -n "$username" ]; then
-    post_data="username=$username&response=$response"
-  elif [ -z "$username" ]; then
-    post_data="username=&response=$response"
-  fi
+        if [ "$DEBUG" -eq 1 ]; then
+            # Show spinner with color and message
+            if [ "$use_color" -eq 1 ]; then
+                # colors (31-36 for red to cyan, 35 for magenta, 0 for reset)
+                color_code=$((31 + c % 6))
+                printf "\r\033[${color_code}m%s\033[0m %s" "$char" "$msg"
+            else
+                printf "\r%s %s" "$char" "$msg"
+            fi
+        elif [ "$VERBOSE" -eq 1 ]; then
+             printf "\r%s %s" "$char" "$msg"
+        fi
 
-  echod "Calling curl $cparams -d $post_data $host/login_sid.lua$v2 | sed -n (....)"
-  sid=$(curl ${cparams} -d "$post_data" "$host/login_sid.lua$v2" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p')
+        i=$((i + 1))
+        if [ "$i" -ge "$len" ]; then
+            i=0
+        fi
 
-  return 0
-}
+        c=$((c + 1))
+        if [ "$c" -ge 7 ]; then
+            c=0
+        fi
 
-# shellcheck disable=SC2086
-login_using_md5() {
-  host="${1%/}"
-  username="${2:-}"
-  pass="$3"
-  challenge="$4"
-
-  echov "Logging in using MD5 challenge"
-  md5hash=$(printf "%s" "$challenge-$pass" |
-            iconv -f UTF-8 -t UTF-16LE |
-            md5sum -b |
-            awk '{print substr($0,1,32)}')
-  response="$challenge-$md5hash"
-
-  echod "Calling curl $cparams $host/login_sid.lua?username=$username&response=$response (....)"
-  sid=$(curl ${cparams} "$host/login_sid.lua?username=$username&response=$response" 2>/dev/null | sed -n 's/.*<SID>\([^<]*\)<\/SID>.*/\1/p')
-
-  return 0
-}
-
-
-_parse_host_certificate() {
-  devcert=$(echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -issuer -subject -noout)
-  subject_name=$(echo "$devcert" | grep -iE "^subject=" | sed 's/subject=CN=//')
-  issuer_name=$(echo "$devcert" | grep -iE "^issuer=" | awk -F', ' '{print $NF}' | sed 's/CN=//')
-  subject_idx=$(echo "$subject_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
-  issuer_idx=$(echo "$issuer_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
-
-  if ! has_index "$subject_idx"; then
-    echowv "Subject index not in data.json!"
-  fi
-
-  if ! has_index "$issuer_idx"; then
-    echowv "Issuer index not in data.json!"
-  fi
-}
-
-
-_validate_host_certificate() {
-
-  echov "Validating host certificate..."
-  ipcheck=$(echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -checkip "$1" -noout)
-
-  if printf "%s" "$ipcheck" | grep -qE "NOT" ;then
-    echoe "Device certificate verification failed. IP Address $2 doesn't match!"
-    return 1
-  fi
-  echosv "IP check successfull..."
-
-  hostcheck=$(echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -checkhost "$2" -noout)
-
-  if printf "%s" "$hostcheck" | grep -qE "NOT" ;then
-    echoe "Device certificate verification failed. Host $2 doesn't match!"
-    return 1
-  fi
-
-  echosv "Host check successfull..."
-  return 0
-}
-
-
-_check_host_cert_expired() {
-  echo | openssl s_client -connect "$1:443" 2>/dev/null | openssl x509 -checkend 0 >/dev/null 2>&1 || {
-    echow "Certificate on $host is expired"
-    cparams="-sS -k"
-  }
-  return 0
-}
-
-
-# shellcheck disable=SC2086
-install_to_fritzbox() {
-  proto="https"
-  host="${1:-"192.168.178.1"}"
-  host="$proto://${host%/}"
-  pass="${2:+"$([ -s "$pass" ] && absolutepath "$2")"}"
-  pass="${pass:-$(prompt_passphrase "false" "FritzBox Login" | tr -d '\n\r')}"
-  username="${3:-}"
-  certpass="${4:+$([ -s "$certpass" ] && absolutepath "$4")}"
-  _name="$5"
-
-  index=$(echo "$_name" | sed -e 's/[- ]/_/g' | tr '[:upper:]' '[:lower:]')
-  [ "$index" = "$_name" ] && _name="$(get_value_from_index "$index" "name")"
-
-  key="${index:+$(get_value_from_index "$index" "key")}"
-  certsalt="${6:+$([ -s "$certsalt" ] && absolutepath "$6")}"
-  certsalt="${certsalt:-"$(get_value_from_index "$index" "salt")"}"
-  certpass="$(derive_key_from_passphrase "$certpass" "$certsalt" "$key encrypted privated key" "false" | tr -d '\n\r')"
-  tmpfile="$(mktemp -t XXXXXX)"
-  [ -s "$key" ] && openssl rsa -in "$key" -passin "pass:$certpass" -noout 2>/dev/null
-
-  sid=
-  cparams="-sS"
-  v2="?version=2"
-  fallback=0
-
-  _parse_host_certificate "$1"
-  _check_host_cert_expired "$1"
-
-  echoi "Installing certificate: $_name on $host"
-
-  echod "Starting install_to_fritzbox with:"
-  echod "       host: $host"
-  echod "       pass: $pass"
-  echod "   username: $username"
-  echod "   certpass: $certpass"
-  echod "   certsalt: $certsalt"
-  echov "Requesting challenge..."
-
-  blockt=999
-  while [ "$blockt" -gt 0 ]; do
-    case "$blockt" in
-      1|999)
-        echod "Calling curl ${cparams} \"$host/login_sid.lua$v2\""
-        challenge_response=$(curl ${cparams} "$host/login_sid.lua$v2" 2>/dev/null)
-        challenge="$(echo "$challenge_response" | sed -n 's/.*<Challenge>\([^<]*\)<\/Challenge>.*/\1/p')"
-        prefix=$(echo "$challenge" | cut -d'$' -f1)
-        [ "$prefix" != "2" ] && v2=
-        blockt="$(echo "$challenge_response" | sed -n 's/.*<BlockTime>\([^<]*\)<\/BlockTime>.*/\1/p')"
-        echod "Response received, Challenge $challenge, BlockTime $blockt"
-        ;;
-      *) echow "We are being rate limited. $blockt seconds left." '\r';;
-    esac
-    blockt=$((blockt - 1))
-    sleep 1
-  done
-
-  if [ "$prefix" = "2" ] && [ "$fallback" -ne 1 ]; then
-    login_using_pbkdf2 "$host" "$username" "$pass" "$challenge" || {
-      echow "Failed logging in using PBKDF2 challenge."
-      echow "Falling back to md5 challenge."
-      fallback=1
-    }
-  fi
-
-  if [ "$prefix" != "2" ] || [ "$fallback" -eq 1 ]; then
-    login_using_md5 "$host" "$username" "$pass" "$challenge" || {
-      echoe "Failed logging in using md5 challenge"
-      return 1
-    }
-  fi
-
-  if [ -z "$sid" ] || [ "$sid" = "0000000000000000" ]; then
-    echoe "Login failed. SID is missing or 0 ($sid)"
-    return 1
-  elif [ -n "$sid" ]; then
-    echosv "Login successful @ $host"
-    echod "Received SID: $sid."
-  fi
-
-  certbundle=$(cat "$(get_value_from_index "$index" "fullchain")" "$key" | grep -v '^$')
-
-  boundary="---------------------------$(date +%Y%m%d%H%M%S)"
-
-  cat <<EOD >>"${tmpfile}"
---${boundary}
-Content-Disposition: form-data; name="sid"
-
-${sid}
---${boundary}
-Content-Disposition: form-data; name="BoxCertPassword"
-
-${certpass}
---${boundary}
-Content-Disposition: form-data; name="BoxCertImportFile"; filename="BoxCert.pem"
-Content-Type: application/octet-stream
-
-${certbundle}
---${boundary}--
-EOD
-  echov "Uploading certificate..."
-  success_msgs="^ *(Das SSL-Zertifikat wurde erfolgreich importiert|Import of the SSL certificate was successful|El certificado SSL se ha importado correctamente|Le certificat SSL a été importé|Il certificato SSL è stato importato( correttamente)?|Import certyfikatu SSL został pomyślnie zakończony)\.$"
-  echod "Calling curl $cparams \"$host/cgi-bin/firmwarecfg\" -H \"Content-type: multipart/form-data boundary=(...)\" --data-binary \"@${tmpfile}\" | cat (...)"
-  curl ${cparams} "$host/cgi-bin/firmwarecfg" -H "Content-type: multipart/form-data boundary=${boundary}" --data-binary "@${tmpfile}" 2>/dev/null | cat | grep -qE "${success_msgs}" || {
-    echoe "Certificate upload failed."
-    unset tmpfile tmpkey certpass certsalt pass
-    rm -f "$tmpfile" || true
-    return 1
-  }
-  echosv "Successfully uploaded certificate..."
-  rm -f "$tmpfile" || true
-  echov "Verifying certificate @ $host ..."
-  unset tmpfile tmpkey certpass certsalt pass
-  _validate_host_certificate "$1" "$(get_value_from_index "$index" 'cn')" || {
-    echoe "Host certificate verification failed!"
-    return 1
-  }
-  echos "Successfully uploaded & installed certificate: $_name on $host."
-  return 0
-}
-
-
-open_enpass_vault() {
-  vault_dir="$(find /home/"${DYSTOPIAN_USER}" -type d -name "Vaults" 2>/dev/null)"
-  vault_file="$(find "$vault_dir" -type f -name "*.enpassdb")"
-  vault_salt="$(hexdump -ve '1/1 "%.2X"' -n 16 "$vault_file")"
-  #key_hex="$(openssl enc -aes-256-cbc -md sha512 -pbkdf2 -iter 320000 \
-  #  -pass "pass:$([ -s "$1" ] && tr -d "\n" < "$(absolutepath "$1")" || prompt_passphrase "false" "Enpass Vault")" -S "$vault_salt" -nopad -P 2>/dev/null | \
-  #grep '^key=' | cut -d= -f2)"
-  sqlcipher "$vault_file" <<EOF
-PRAGMA key = "x'$key_hex'";
-PRAGMA cipher_compatibility = 3;
-PRAGMA cipher_page_size = 1024;
-.tables
-SELECT COUNT(*) FROM item WHERE deleted = 0 AND trashed = 0;
-
-EOF
+        # Sleep — try decimal first, fall back to integer seconds
+        sleep 0.12 2>/dev/null || sleep 1
+    done
 }
